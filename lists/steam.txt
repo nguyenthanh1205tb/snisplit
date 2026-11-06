@@ -1,0 +1,54 @@
+# Steam hostnames blocked by SNI filtering on some ISPs.
+#
+# Plain names  -> written to the hosts file by "snisplit hosts install"
+#                 (the hosts file has no wildcards, so list every subdomain)
+# .domain      -> PAC only: the domain and all its subdomains use the proxy
+
+# store / community / web API
+store.steampowered.com
+api.steampowered.com
+login.steampowered.com
+help.steampowered.com
+checkout.steampowered.com
+media.steampowered.com
+partner.steamgames.com
+steamcommunity.com
+www.steamcommunity.com
+steam-chat.com
+s.team
+images.steamusercontent.com
+
+# CDN: <prefix>.<provider>.steamstatic.com
+store.fastly.steamstatic.com
+shared.fastly.steamstatic.com
+cdn.fastly.steamstatic.com
+community.fastly.steamstatic.com
+avatars.fastly.steamstatic.com
+clan.fastly.steamstatic.com
+video.fastly.steamstatic.com
+store.akamai.steamstatic.com
+shared.akamai.steamstatic.com
+cdn.akamai.steamstatic.com
+community.akamai.steamstatic.com
+avatars.akamai.steamstatic.com
+clan.akamai.steamstatic.com
+video.akamai.steamstatic.com
+store.cloudflare.steamstatic.com
+shared.cloudflare.steamstatic.com
+cdn.cloudflare.steamstatic.com
+community.cloudflare.steamstatic.com
+avatars.cloudflare.steamstatic.com
+clan.cloudflare.steamstatic.com
+video.cloudflare.steamstatic.com
+steamcdn-a.akamaihd.net
+steamstore-a.akamaihd.net
+steamcommunity-a.akamaihd.net
+steamuserimages-a.akamaihd.net
+steamusercontent-a.akamaihd.net
+
+# PAC-only suffixes
+.steampowered.com
+.steamcommunity.com
+.steamstatic.com
+.steam-chat.com
+.steamusercontent.com

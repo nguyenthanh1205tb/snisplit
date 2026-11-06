@@ -1,38 +1,38 @@
 {
-    "version": "0.2.0",
-    "description": "Bypass SNI-based DPI blocking (e.g. Steam in Vietnam) by splitting the TLS ClientHello",
-    "homepage": "https://github.com/nguyenthanh1205tb/snisplit",
-    "license": "MIT",
-    "architecture": {
-        "64bit": {
-            "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.2.0/snisplit_windows_amd64.exe#/snisplit.exe",
-            "hash": "358998ff9f5b82bac328ce908cd5c543509132972932b0fdc67d47c2b99476e5"
-        },
-        "arm64": {
-            "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.2.0/snisplit_windows_arm64.exe#/snisplit.exe",
-            "hash": "cdd6f89d816c87dd5cad2731c1ab5912b0419dc88e7f63c999d530b7bba434f7"
-        }
+  "version": "0.3.1",
+  "description": "Bypass SNI-based DPI blocking (e.g. Steam in Vietnam) by splitting the TLS ClientHello",
+  "homepage": "https://github.com/nguyenthanh1205tb/snisplit",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.3.1/snisplit_windows_amd64.exe#/snisplit.exe",
+      "hash": "3d1cdb369bb9367b7aa136013a1944488e0ae448094b698009ab8de1bdda9a72"
     },
-    "bin": "snisplit.exe",
-    "notes": [
-        "Next steps:",
-        "  snisplit check",
-        "  snisplit hosts install    (in a terminal opened as Administrator)",
-        "  snisplit start",
-        "  snisplit autostart on"
-    ],
-    "checkver": "github",
-    "autoupdate": {
-        "architecture": {
-            "64bit": {
-                "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v$version/snisplit_windows_amd64.exe#/snisplit.exe"
-            },
-            "arm64": {
-                "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v$version/snisplit_windows_arm64.exe#/snisplit.exe"
-            }
-        },
-        "hash": {
-            "url": "$baseurl/checksums.txt"
-        }
+    "arm64": {
+      "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.3.1/snisplit_windows_arm64.exe#/snisplit.exe",
+      "hash": "224f1257d004aaec53ad4a58618a07113c495109546b6425fd0e204d3ba7cbb6"
     }
+  },
+  "bin": "snisplit.exe",
+  "notes": [
+    "Next steps:",
+    "  snisplit check",
+    "  snisplit hosts install    (in a terminal opened as Administrator)",
+    "  snisplit start",
+    "  snisplit autostart on"
+  ],
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v$version/snisplit_windows_amd64.exe#/snisplit.exe"
+      },
+      "arm64": {
+        "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v$version/snisplit_windows_arm64.exe#/snisplit.exe"
+      }
+    },
+    "hash": {
+      "url": "$baseurl/checksums.txt"
+    }
+  }
 }

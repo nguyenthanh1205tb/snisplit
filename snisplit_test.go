@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -337,5 +340,80 @@ func TestAutoModeFallback(t *testing.T) {
 	}
 	if st := p.status(); st.Connections != 1 || st.Failures != 0 {
 		t.Errorf("status = %+v", st)
+	}
+}
+
+func TestUpdateHelpers(t *testing.T) {
+	if got := assetName("windows", "amd64"); got != "snisplit_windows_amd64.exe" {
+		t.Errorf("assetName = %s", got)
+	}
+	if got := assetName("darwin", "arm64"); got != "snisplit_darwin_arm64" {
+		t.Errorf("assetName = %s", got)
+	}
+	for path, want := range map[string]string{
+		`/opt/homebrew/Cellar/snisplit/0.2.0/bin/snisplit`:        "Homebrew",
+		`/home/linuxbrew/.linuxbrew/bin/snisplit`:                 "Homebrew",
+		`C:\Users\a\scoop\apps\snisplit\current\snisplit.exe`:     "Scoop",
+		`C:\Users\a\AppData\Local\Programs\snisplit\snisplit.exe`: "",
+	} {
+		if got := packageManager(path); got != want {
+			t.Errorf("packageManager(%s) = %q, want %q", path, got, want)
+		}
+	}
+	sums := "aaa  snisplit_linux_amd64\nBBB *snisplit_windows_amd64.exe\n"
+	if h, ok := checksumFor(sums, "snisplit_windows_amd64.exe"); !ok || h != "bbb" {
+		t.Errorf("checksumFor = %q %v", h, ok)
+	}
+	if _, ok := checksumFor(sums, "snisplit_darwin_arm64"); ok {
+		t.Error("found a missing asset")
+	}
+}
+
+// replaceBinary against a fake release server: a good download replaces the
+// file and keeps the old one aside; a bad checksum changes nothing.
+func TestReplaceBinary(t *testing.T) {
+	asset := assetName(runtime.GOOS, runtime.GOARCH)
+	newBin := []byte("new binary")
+	sum := sha256.Sum256(newBin)
+	good := hex.EncodeToString(sum[:])
+	checksum := good
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			io.WriteString(w, `{"tag_name":"v9.9.9"}`)
+		case "/dl/v9.9.9/checksums.txt":
+			io.WriteString(w, checksum+"  "+asset+"\n")
+		case "/dl/v9.9.9/" + asset:
+			w.Write(newBin)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	src := updateSource{apiLatest: srv.URL + "/latest", downloadBase: srv.URL + "/dl"}
+
+	if tag, err := latestTag(src); err != nil || tag != "v9.9.9" {
+		t.Fatalf("latestTag = %q, %v", tag, err)
+	}
+	exe := filepath.Join(t.TempDir(), "snisplit.exe")
+	os.WriteFile(exe, []byte("old binary"), 0o755)
+
+	checksum = strings.Repeat("0", 64)
+	if err := replaceBinary(src, "v9.9.9", exe); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("bad checksum: err = %v", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old binary" {
+		t.Fatal("file changed despite a bad checksum")
+	}
+	if _, err := os.Stat(exe + ".new"); !os.IsNotExist(err) {
+		t.Fatal("temporary file left behind")
+	}
+
+	checksum = good
+	if err := replaceBinary(src, "v9.9.9", exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "new binary" {
+		t.Fatalf("not replaced: %q", b)
 	}
 }

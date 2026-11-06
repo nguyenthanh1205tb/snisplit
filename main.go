@@ -24,6 +24,7 @@ Usage:
   snisplit hosts remove         remove all snisplit entries from the hosts file (admin/sudo)
   snisplit hosts show           print the hostnames that would be installed
   snisplit autostart on|off     start the proxy when you log in (Windows)
+  snisplit update [--check]     update to the latest release
   snisplit version              print the version
 
 Typical setup (Steam):
@@ -58,6 +59,8 @@ func main() {
 		err = cmdHosts(args)
 	case "autostart":
 		err = cmdAutostart(args)
+	case "update":
+		err = cmdUpdate(args)
 	case "version", "--version", "-version":
 		fmt.Println("snisplit", version)
 	case "help", "-h", "--help", "-help":

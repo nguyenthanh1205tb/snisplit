@@ -14,6 +14,13 @@ wget https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.p
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
+or with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add snisplit https://github.com/nguyenthanh1205tb/snisplit
+scoop install snisplit
+```
+
 **macOS / Linux**:
 
 ```sh
@@ -32,7 +39,7 @@ snisplit start            # run in the background, then restart Steam
 
 Start at login: `snisplit autostart on` (Windows) or `brew services start snisplit` (macOS/Linux).
 
-Other commands: `snisplit stop`, `snisplit status`, `snisplit hosts remove`.
+Other commands: `snisplit stop`, `snisplit status`, `snisplit update`, `snisplit hosts remove`.
 
 snisplit runs under a supervisor that restarts it if it crashes, and picks the
 split method that works for each site on its own (`--mode auto`).

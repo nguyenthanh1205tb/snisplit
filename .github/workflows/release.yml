@@ -36,3 +36,22 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes \
             || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+      - name: Update Scoop manifest
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"; ver="${tag#v}"
+          sum() { grep " \*\?$1\$" dist/checksums.txt | cut -d' ' -f1; }
+          git fetch -q origin main && git checkout -q main
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          jq --arg v "$ver" --arg b "$base" --arg a "$(sum snisplit_windows_amd64.exe)" --arg r "$(sum snisplit_windows_arm64.exe)" \
+            '.version = $v
+             | .architecture."64bit".url = "\($b)/snisplit_windows_amd64.exe#/snisplit.exe"
+             | .architecture."64bit".hash = $a
+             | .architecture.arm64.url = "\($b)/snisplit_windows_arm64.exe#/snisplit.exe"
+             | .architecture.arm64.hash = $r' bucket/snisplit.json > m.json
+          mv m.json bucket/snisplit.json
+          if git diff --quiet; then echo "manifest already at $ver"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "scoop: snisplit $ver"
+          git push -q origin main

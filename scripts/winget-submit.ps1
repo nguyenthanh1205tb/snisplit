@@ -7,8 +7,13 @@
 param([Parameter(Mandatory)][string]$Version)
 $ErrorActionPreference = 'Stop'
 
+# Runs a native command: stderr is shown (not treated as a PowerShell error),
+# stdout is returned, a non-zero exit code stops the script.
 function Run([string]$exe) {
-    $out = & $exe @args
+    $ErrorActionPreference = 'Continue'
+    $out = & $exe @args 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.ToString() } else { $_ }
+    }
     if ($LASTEXITCODE -ne 0) { throw "$exe $args failed ($LASTEXITCODE)" }
     $out
 }
@@ -21,8 +26,11 @@ if (-not (Test-Path $src)) { throw "no manifests at $src" }
 Run winget validate --manifest $src | Out-Host
 
 $me = Run gh api user --jq .login
-& gh repo view "$me/winget-pkgs" *> $null
-if ($LASTEXITCODE -ne 0) {
+$ErrorActionPreference = 'Continue'
+& gh repo view "$me/winget-pkgs" 2>&1 | Out-Null
+$hasFork = $LASTEXITCODE -eq 0
+$ErrorActionPreference = 'Stop'
+if (-not $hasFork) {
     Run gh repo fork microsoft/winget-pkgs --clone=false | Out-Host
     Start-Sleep 10
 }

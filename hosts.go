@@ -171,7 +171,8 @@ func cmdHosts(args []string) error {
 			fmt.Println(n)
 		}
 		cur, _ := os.ReadFile(*file)
-		fmt.Printf("\n%d names; %d currently installed in %s\n", len(exactNames(names)), len(installedNames(string(cur))), *file)
+		// summary on stderr so "snisplit hosts show > list.txt" gives a clean list
+		fmt.Fprintf(os.Stderr, "\n%d names; %d currently installed in %s\n", len(exactNames(names)), len(installedNames(string(cur))), *file)
 		return nil
 	case "install":
 		names, err := loadNames(*preset, *list)

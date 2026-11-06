@@ -1,4 +1,6 @@
-# snisplit
+<p align="center"><img src="docs/logo.png" width="112" alt="snisplit logo"></p>
+
+<h1 align="center">snisplit</h1>
 
 Bypass ISP blocking that reads the site name (SNI) from HTTPS connections —
 e.g. Steam in Vietnam. snisplit splits the TLS ClientHello so the name never

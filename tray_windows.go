@@ -11,6 +11,8 @@ import (
 
 	"fyne.io/systray"
 	"golang.org/x/sys/windows"
+
+	"github.com/nguyenthanh1205tb/snisplit/internal/logo"
 )
 
 // cmdTray shows a notification-area icon to start/stop the proxy, toggle
@@ -96,7 +98,9 @@ func autostartValue() string {
 func autostartEnabled() bool { return autostartValue() != "" }
 
 func (t *tray) ready() {
-	iconOn, iconOff, iconWarn := makeIcon(colorRunning), makeIcon(colorStopped), makeIcon(colorFailing)
+	// tray sizes only, all with the larger "compact" mark that stays readable at 16 px
+	trayIcon := func(st logo.State) []byte { return logo.ICO(st, 64, 16, 20, 24, 32, 40, 48, 64) }
+	iconOn, iconOff, iconWarn := trayIcon(logo.Running), trayIcon(logo.Stopped), trayIcon(logo.Failing)
 	systray.SetIcon(iconOff)
 	systray.SetTooltip("snisplit")
 

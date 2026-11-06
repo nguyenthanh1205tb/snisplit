@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 
 	"fyne.io/systray"
@@ -97,6 +98,14 @@ func autostartValue() string {
 
 func autostartEnabled() bool { return autostartValue() != "" }
 
+// runElevated starts exe with args through UAC ("Run as administrator").
+func runElevated(exe, args string) error {
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, _ := windows.UTF16PtrFromString(exe)
+	params, _ := windows.UTF16PtrFromString(args)
+	return windows.ShellExecute(0, verb, file, params, nil, windows.SW_HIDE)
+}
+
 func (t *tray) ready() {
 	// tray sizes only, all with the larger "compact" mark that stays readable at 16 px
 	trayIcon := func(st logo.State) []byte { return logo.ICO(st, 64, 16, 20, 24, 32, 40, 48, 64) }
@@ -118,6 +127,9 @@ func (t *tray) ready() {
 	}
 	mLogin := systray.AddMenuItemCheckbox("Start at login", "Start the proxy and this icon when you log in", autostartEnabled())
 	mLog := systray.AddMenuItem("Open log", "Open the proxy log file")
+	mDoctor := systray.AddMenuItem("Run diagnostics", "Open a window with the results of 'snisplit doctor'")
+	mList := systray.AddMenuItem("Update site list", "Download the newest site list (asks for administrator rights)")
+	mList.Hide()
 	mUpdate := systray.AddMenuItem("Check for updates", "")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit icon (proxy keeps running)", "")
@@ -157,6 +169,32 @@ func (t *tray) ready() {
 	}
 	refresh()
 
+	// Offer a site-list update when the list on GitHub has changed.
+	checkList := func() {
+		cur, _ := os.ReadFile(hostsPath())
+		if len(installedNames(string(cur))) == 0 {
+			mList.Hide()
+			return
+		}
+		list, err := fetchList("steam")
+		if err != nil {
+			return
+		}
+		if added, removed := listDiff(list, string(cur)); len(added)+len(removed) > 0 {
+			mList.SetTitle(fmt.Sprintf("Update site list (+%d, -%d)", len(added), len(removed)))
+			mList.Show()
+		} else {
+			mList.Hide()
+		}
+	}
+	go func() {
+		time.Sleep(10 * time.Second)
+		checkList()
+		for range time.Tick(24 * time.Hour) {
+			checkList()
+		}
+	}()
+
 	go func() {
 		tick := time.NewTicker(3 * time.Second)
 		defer tick.Stop()
@@ -189,6 +227,17 @@ func (t *tray) ready() {
 			case <-mLog.ClickedCh:
 				open := exec.Command("rundll32", "url.dll,FileProtocolHandler", logPath())
 				open.Start()
+			case <-mDoctor.ClickedCh:
+				cmd := exec.Command("cmd.exe", "/k", t.exe, "doctor")
+				cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000010} // CREATE_NEW_CONSOLE
+				cmd.Start()
+			case <-mList.ClickedCh:
+				if err := runElevated(t.exe, "hosts update"); err == nil {
+					go func() {
+						time.Sleep(15 * time.Second)
+						checkList()
+					}()
+				}
 			case <-mUpdate.ClickedCh:
 				if updateTag != "" {
 					mUpdate.SetTitle("Updating...")

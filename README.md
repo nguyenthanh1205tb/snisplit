@@ -43,7 +43,10 @@ Start at login: `snisplit autostart on` (Windows, also shows a tray icon to star
 the proxy, open the log and install updates) or `brew services start snisplit` (macOS/Linux).
 Show the tray icon now with `snisplit tray`.
 
-Other commands: `snisplit stop`, `snisplit status`, `snisplit update`, `snisplit hosts remove`.
+Something wrong? `snisplit doctor` checks the whole setup and says how to fix it.
+
+Other commands: `snisplit stop`, `snisplit status`, `snisplit update`,
+`snisplit hosts update` (newest site list from GitHub), `snisplit hosts remove`.
 
 snisplit runs under a supervisor that restarts it if it crashes, and picks the
 split method that works for each site on its own (`--mode auto`).

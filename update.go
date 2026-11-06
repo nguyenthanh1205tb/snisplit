@@ -129,7 +129,7 @@ func assetName(goos, goarch string) string {
 
 // packageManager reports which package manager owns exe, if any.
 func packageManager(exe string) string {
-	p := strings.ToLower(filepath.ToSlash(exe))
+	p := strings.ToLower(strings.ReplaceAll(exe, `\`, "/")) // also on non-Windows hosts
 	switch {
 	case strings.Contains(p, "/cellar/") || strings.Contains(p, "/homebrew/") || strings.Contains(p, "/linuxbrew/"):
 		return "Homebrew"

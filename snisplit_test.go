@@ -442,3 +442,58 @@ func TestPluralAndAutostart(t *testing.T) {
 		t.Error("--autostart rejected")
 	}
 }
+
+func TestValidName(t *testing.T) {
+	for n, want := range map[string]bool{
+		"store.steampowered.com":          true,
+		".steamstatic.com":                true,
+		"steamcdn-a.akamaihd.net":         true,
+		"localhost":                       false,
+		"127.0.0.1":                       false,
+		"evil.com 127.0.0.1":              false,
+		"a.com\n10.0.0.1 b.com":           false,
+		"-bad.example.com":                false,
+		"bad..example.com":                false,
+		strings.Repeat("a.", 130) + "com": false,
+	} {
+		if got := validName(n); got != want {
+			t.Errorf("validName(%q) = %v, want %v", n, got, want)
+		}
+	}
+}
+
+func TestListDiffAndFetch(t *testing.T) {
+	hosts := applyHostsBlock("", []hostEntry{{"a.example", false}, {"old.example", false}, {"mine.example", true}})
+	added, removed := listDiff([]string{"a.example", "new.example", ".suffix.example"}, hosts)
+	if strings.Join(added, ",") != "new.example" || strings.Join(removed, ",") != "old.example" {
+		t.Fatalf("listDiff = +%v -%v (user names and suffixes must be ignored)", added, removed)
+	}
+
+	body := "# list\nstore.example.com\ncdn.example.com\n.example.com\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/lists/good.txt":
+			io.WriteString(w, body)
+		case "/lists/evil.txt":
+			io.WriteString(w, "store.example.com\nevil.com 10.0.0.1\n")
+		case "/lists/empty.txt":
+			io.WriteString(w, "# nothing\n.example.com\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	old := listBaseURL
+	listBaseURL = srv.URL + "/lists/"
+	defer func() { listBaseURL = old }()
+
+	names, err := fetchList("good")
+	if err != nil || len(exactNames(names)) != 2 {
+		t.Fatalf("fetchList(good) = %v, %v", names, err)
+	}
+	for _, p := range []string{"evil", "empty", "missing", "../x"} {
+		if _, err := fetchList(p); err == nil {
+			t.Errorf("fetchList(%q) should fail", p)
+		}
+	}
+}

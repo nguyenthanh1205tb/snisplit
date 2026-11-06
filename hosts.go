@@ -4,14 +4,77 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
+
+// listBaseURL serves the newest built-in lists, so "hosts update" can pick up
+// new Steam hostnames without a new release.
+var listBaseURL = "https://raw.githubusercontent.com/" + repoSlug + "/main/lists/"
+
+var nameRe = regexp.MustCompile(`^\.?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
+
+// validName accepts hostnames and ".domain" suffixes, nothing else.
+func validName(n string) bool { return len(n) <= 253 && nameRe.MatchString(n) }
+
+// fetchList downloads the latest version of a built-in list.
+func fetchList(preset string) ([]string, error) {
+	if !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(preset) {
+		return nil, fmt.Errorf("invalid preset name %q", preset)
+	}
+	resp, err := httpGet(listBaseURL + preset + ".txt")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	names := parseNames(string(data))
+	for _, n := range names {
+		if !validName(n) {
+			return nil, fmt.Errorf("the downloaded list contains an invalid entry %q", n)
+		}
+	}
+	if len(exactNames(names)) == 0 {
+		return nil, errors.New("the downloaded list is empty")
+	}
+	return names, nil
+}
+
+// listDiff compares a list with the list-managed (non-user) names in the
+// hosts block.
+func listDiff(list []string, hostsContent string) (added, removed []string) {
+	have := map[string]bool{}
+	for _, e := range parseBlock(hostsContent) {
+		if !e.user {
+			have[e.name] = true
+		}
+	}
+	want := map[string]bool{}
+	for _, n := range exactNames(list) {
+		want[n] = true
+		if !have[n] {
+			added = append(added, n)
+		}
+	}
+	for n := range have {
+		if !want[n] {
+			removed = append(removed, n)
+		}
+	}
+	sort.Strings(removed)
+	return added, removed
+}
 
 const (
 	hostsBegin = "# BEGIN snisplit"
@@ -206,6 +269,7 @@ func flushDNS() {
 const hostsUsage = `usage: snisplit hosts <command> [flags] [names]
 
   install          write the list(s) to the hosts file (keeps names you added)
+  update [--check] download the newest list from GitHub and apply it
   add <name>...    add hostnames to the snisplit block
   del <name>...    remove hostnames from the snisplit block
   remove           remove the whole snisplit block
@@ -224,6 +288,7 @@ func cmdHosts(args []string) error {
 	fset.Var(&lists, "list", "extra list file, one hostname per line (repeatable)")
 	file := fset.String("file", hostsPath(), "hosts file to edit")
 	reset := fset.Bool("reset", false, "install: drop the names added with 'hosts add'")
+	checkOnly := fset.Bool("check", false, "update: only show what would change")
 	fset.Parse(args[1:])
 	rest := fset.Args()
 
@@ -272,6 +337,37 @@ func cmdHosts(args []string) error {
 		}
 		fmt.Printf("hosts: %d names now point to 127.0.0.1 (%d added by you) in %s\n", len(entries), len(keep), *file)
 		fmt.Println("Keep the proxy running (snisplit start), otherwise these sites will not load.")
+		return nil
+
+	case "update":
+		list, err := fetchList(*preset)
+		if err != nil {
+			return fmt.Errorf("cannot download the %s list: %v", *preset, err)
+		}
+		cur, err := readCur()
+		if err != nil {
+			return err
+		}
+		added, removed := listDiff(list, cur)
+		if len(added) == 0 && len(removed) == 0 {
+			fmt.Printf("the %s list is up to date (%d names)\n", *preset, len(exactNames(list)))
+			return nil
+		}
+		for _, n := range added {
+			fmt.Println("  + " + n)
+		}
+		for _, n := range removed {
+			fmt.Println("  - " + n)
+		}
+		if *checkOnly {
+			fmt.Printf("%d to add, %d to remove (run without --check to apply)\n", len(added), len(removed))
+			return nil
+		}
+		entries := mergeEntries(exactNames(list), userEntries(cur))
+		if err := writeHosts(*file, applyHostsBlock(cur, entries)); err != nil {
+			return err
+		}
+		fmt.Printf("hosts updated: %d names (%d added, %d removed)\n", len(entries), len(added), len(removed))
 		return nil
 
 	case "add":

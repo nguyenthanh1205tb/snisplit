@@ -22,7 +22,9 @@ Usage:
   snisplit stop                 stop the background proxy
   snisplit status               show state and traffic counters
   snisplit check [host ...]     test which hosts are blocked and whether splitting helps
+  snisplit doctor               check the whole setup and say how to fix problems
   snisplit hosts install        point the list's hostnames at 127.0.0.1 (admin/sudo)
+  snisplit hosts update         get the newest site list from GitHub (admin/sudo)
   snisplit hosts add <name>...  add hostnames (admin/sudo)
   snisplit hosts del <name>...  remove hostnames (admin/sudo)
   snisplit hosts remove         remove all snisplit entries from the hosts file (admin/sudo)
@@ -66,6 +68,8 @@ func main() {
 		err = cmdAutostart(args)
 	case "update":
 		err = cmdUpdate(args)
+	case "doctor":
+		err = cmdDoctor(args)
 	case "tray":
 		err = cmdTray(args)
 	case "version", "--version", "-version":

@@ -7,6 +7,10 @@ import (
 	"os"
 )
 
+// Logo images and the Windows resource files (icon, manifest, version info):
+//go:generate go run ./tools/genicon
+//go:generate go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64,arm64
+
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 

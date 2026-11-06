@@ -82,11 +82,18 @@ func (t *tray) run(args ...string) error {
 	return cmd.Run()
 }
 
-func autostartEnabled() bool {
+// autostartValue returns the login entry ("" when there is none).
+func autostartValue() string {
 	cmd := exec.Command("reg", "query", runKey, "/v", "snisplit")
 	cmd.SysProcAttr = detachAttr()
-	return cmd.Run() == nil
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return regValue(string(out))
 }
+
+func autostartEnabled() bool { return autostartValue() != "" }
 
 func (t *tray) ready() {
 	iconOn, iconOff, iconWarn := makeIcon(colorRunning), makeIcon(colorStopped), makeIcon(colorFailing)
@@ -102,6 +109,9 @@ func (t *tray) ready() {
 	mStop := systray.AddMenuItem("Stop proxy", "Stop the proxy")
 	mRestart := systray.AddMenuItem("Restart proxy", "Stop and start the proxy")
 	systray.AddSeparator()
+	if legacyAutostart(autostartValue()) { // pre-0.4 entry: start this icon at login too
+		t.run("autostart", "on")
+	}
 	mLogin := systray.AddMenuItemCheckbox("Start at login", "Start the proxy and this icon when you log in", autostartEnabled())
 	mLog := systray.AddMenuItem("Open log", "Open the proxy log file")
 	mUpdate := systray.AddMenuItem("Check for updates", "")
@@ -127,9 +137,9 @@ func (t *tray) ready() {
 		}
 		lastFailures = s.Failures
 		systray.SetIcon(icon)
-		systray.SetTooltip(fmt.Sprintf("snisplit %s: running\n%d connections, %d failed", s.Version, s.Connections, s.Failures))
+		systray.SetTooltip(fmt.Sprintf("snisplit %s: running\n%s, %d failed", s.Version, plural(s.Connections, "connection"), s.Failures))
 		mState.SetTitle(fmt.Sprintf("Running %s (up %s)", s.Version, s.Uptime))
-		mTraffic.SetTitle(fmt.Sprintf("%d connections, %d failed, %d restarts", s.Connections, s.Failures, s.Restarts))
+		mTraffic.SetTitle(fmt.Sprintf("%s, %d failed, %s", plural(s.Connections, "connection"), s.Failures, plural(int64(s.Restarts), "restart")))
 		mTraffic.Show()
 		mStart.Disable()
 		mStop.Enable()

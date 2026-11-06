@@ -443,3 +443,28 @@ func TestMakeIcon(t *testing.T) {
 		t.Errorf("centre should be the white split, got %v", img.At(16, 15))
 	}
 }
+
+func TestPluralAndAutostart(t *testing.T) {
+	if plural(1, "connection") != "1 connection" || plural(0, "restart") != "0 restarts" || plural(12, "connection") != "12 connections" {
+		t.Error("plural")
+	}
+	out := "\r\n" + `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` + "\r\n" +
+		`    snisplit    REG_SZ    "C:\x\snisplit.exe" start` + "\r\n\r\n"
+	if v := regValue(out); v != `"C:\x\snisplit.exe" start` {
+		t.Errorf("regValue = %q", v)
+	}
+	for val, legacy := range map[string]bool{
+		`"C:\x\snisplit.exe" start`:             true,  // written by v0.1-v0.3: upgrade
+		`"C:\x\snisplit.exe" tray --start`:      false, // already has the icon
+		`"C:\x\snisplit.exe" start --autostart`: false, // explicit --no-tray choice
+		"":                                      false, // no entry
+	} {
+		if got := legacyAutostart(val); got != legacy {
+			t.Errorf("legacyAutostart(%q) = %v", val, got)
+		}
+	}
+	// the marker flag must not break "start"/"run" flag parsing
+	if o := parseRunFlags("start", []string{"--autostart"}); o.validate() != nil {
+		t.Error("--autostart rejected")
+	}
+}

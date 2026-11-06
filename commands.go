@@ -41,6 +41,7 @@ func parseRunFlags(name string, args []string) *runOpts {
 	fset.StringVar(&o.dns, "dns", "doh", "resolver for upstream hosts: doh or system")
 	fset.StringVar(&o.preset, "preset", "steam", "built-in lists for the PAC file, comma-separated ("+strings.Join(presets(), ", ")+", none)")
 	fset.Var(&o.lists, "list", "extra list file for the PAC file (repeatable)")
+	fset.Bool("autostart", false, "marks a login entry made with 'autostart on --no-tray' (no effect)")
 	fset.Parse(args)
 	return o
 }
@@ -223,7 +224,7 @@ func cmdStatus(args []string) error {
 		if s.SupervisorPID > 0 {
 			fmt.Printf("restarts  %d (supervisor pid %d)\n", s.Restarts, s.SupervisorPID)
 		}
-		fmt.Printf("traffic   %d connections, %d failed, %d needed another split mode\n", s.Connections, s.Failures, s.Retries)
+		fmt.Printf("traffic   %s, %d failed, %d needed another split mode\n", plural(s.Connections, "connection"), s.Failures, s.Retries)
 		if len(s.TopFailures) > 0 {
 			fmt.Printf("failing   %s\n", strings.Join(s.TopFailures, ", "))
 		}
@@ -238,6 +239,29 @@ func cmdStatus(args []string) error {
 // ---------------------------------------------------------------- autostart
 
 const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+
+// regValue extracts the data of a REG_SZ value from "reg query" output.
+func regValue(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, "REG_SZ"); i >= 0 {
+			return strings.TrimSpace(line[i+len("REG_SZ"):])
+		}
+	}
+	return ""
+}
+
+// legacyAutostart reports a login entry written before v0.4.0, which starts
+// the proxy without the tray icon (and was not an explicit --no-tray choice).
+func legacyAutostart(val string) bool {
+	return val != "" && !strings.Contains(val, " tray") && !strings.Contains(val, "--autostart")
+}
+
+func plural(n int64, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}
 
 func cmdAutostart(args []string) error {
 	if len(args) == 0 {
@@ -259,8 +283,8 @@ func cmdAutostart(args []string) error {
 			return err
 		}
 		val, what := fmt.Sprintf(`"%s" tray --start`, exe), "the proxy and its tray icon start"
-		if *noTray {
-			val, what = fmt.Sprintf(`"%s" start`, exe), "the proxy starts"
+		if *noTray { // "--autostart" tells the tray this was chosen, so it is not upgraded
+			val, what = fmt.Sprintf(`"%s" start --autostart`, exe), "the proxy starts"
 		}
 		if out, err := exec.Command("reg", "add", runKey, "/v", "snisplit", "/t", "REG_SZ", "/d", val, "/f").CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)

@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -415,5 +417,29 @@ func TestReplaceBinary(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(exe); string(b) != "new binary" {
 		t.Fatalf("not replaced: %q", b)
+	}
+}
+
+func TestMakeIcon(t *testing.T) {
+	ico := makeIcon(colorRunning)
+	if len(ico) < 22 || binary.LittleEndian.Uint16(ico[2:]) != 1 || binary.LittleEndian.Uint16(ico[4:]) != 1 {
+		t.Fatalf("bad ICO header % x", ico[:min(len(ico), 22)])
+	}
+	size, offset := binary.LittleEndian.Uint32(ico[14:]), binary.LittleEndian.Uint32(ico[18:])
+	if offset != 22 || int(size) != len(ico)-22 {
+		t.Fatalf("bad ICO directory: size %d offset %d len %d", size, offset, len(ico))
+	}
+	img, err := png.Decode(bytes.NewReader(ico[22:]))
+	if err != nil || img.Bounds().Dx() != 32 {
+		t.Fatalf("embedded PNG: %v", err)
+	}
+	if _, _, _, a := img.At(0, 0).RGBA(); a != 0 {
+		t.Error("corner should be transparent")
+	}
+	if r, g, _, a := img.At(8, 16).RGBA(); a == 0 || g>>8 != uint32(colorRunning.G) || r>>8 != uint32(colorRunning.R) {
+		t.Errorf("body colour = %v", img.At(8, 16))
+	}
+	if r, g, b, _ := img.At(16, 15).RGBA(); r>>8 < 200 || g>>8 < 200 || b>>8 < 200 {
+		t.Errorf("centre should be the white split, got %v", img.At(16, 15))
 	}
 }

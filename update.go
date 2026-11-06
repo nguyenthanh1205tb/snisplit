@@ -78,6 +78,7 @@ func cmdUpdate(args []string) error {
 	if wasRunning {
 		cmd := exec.Command(exe, "start")
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.SysProcAttr = detachAttr() // no console window when run from the tray
 		return cmd.Run()
 	}
 	return nil

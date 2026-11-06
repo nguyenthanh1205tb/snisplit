@@ -37,7 +37,9 @@ snisplit hosts install    # once, as Administrator (Windows) or with sudo
 snisplit start            # run in the background, then restart Steam
 ```
 
-Start at login: `snisplit autostart on` (Windows) or `brew services start snisplit` (macOS/Linux).
+Start at login: `snisplit autostart on` (Windows, also shows a tray icon to start/stop
+the proxy, open the log and install updates) or `brew services start snisplit` (macOS/Linux).
+Show the tray icon now with `snisplit tray`.
 
 Other commands: `snisplit stop`, `snisplit status`, `snisplit update`, `snisplit hosts remove`.
 

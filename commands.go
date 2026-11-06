@@ -241,8 +241,11 @@ const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 
 func cmdAutostart(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: snisplit autostart on|off")
+		return fmt.Errorf("usage: snisplit autostart on [--no-tray] | off")
 	}
+	fset := flag.NewFlagSet("autostart", flag.ExitOnError)
+	noTray := fset.Bool("no-tray", false, "start only the proxy at login, without the tray icon")
+	fset.Parse(args[1:])
 	if runtime.GOOS != "windows" {
 		fmt.Println("On macOS/Linux use Homebrew services:")
 		fmt.Println("  brew services start snisplit     # start now and at login")
@@ -255,11 +258,14 @@ func cmdAutostart(args []string) error {
 		if err != nil {
 			return err
 		}
-		val := fmt.Sprintf(`"%s" start`, exe)
+		val, what := fmt.Sprintf(`"%s" tray --start`, exe), "the proxy and its tray icon start"
+		if *noTray {
+			val, what = fmt.Sprintf(`"%s" start`, exe), "the proxy starts"
+		}
 		if out, err := exec.Command("reg", "add", runKey, "/v", "snisplit", "/t", "REG_SZ", "/d", val, "/f").CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
-		fmt.Println("autostart on: snisplit starts when you log in")
+		fmt.Printf("autostart on: %s when you log in\n", what)
 	case "off":
 		exec.Command("reg", "delete", runKey, "/v", "snisplit", "/f").Run()
 		fmt.Println("autostart off")

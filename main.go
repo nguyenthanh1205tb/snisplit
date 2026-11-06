@@ -23,7 +23,8 @@ Usage:
   snisplit hosts del <name>...  remove hostnames (admin/sudo)
   snisplit hosts remove         remove all snisplit entries from the hosts file (admin/sudo)
   snisplit hosts show           print the hostnames that would be installed
-  snisplit autostart on|off     start the proxy when you log in (Windows)
+  snisplit tray                 show a notification-area icon (Windows)
+  snisplit autostart on|off     start the proxy and tray icon when you log in (Windows)
   snisplit update [--check]     update to the latest release
   snisplit version              print the version
 
@@ -61,6 +62,8 @@ func main() {
 		err = cmdAutostart(args)
 	case "update":
 		err = cmdUpdate(args)
+	case "tray":
+		err = cmdTray(args)
 	case "version", "--version", "-version":
 		fmt.Println("snisplit", version)
 	case "help", "-h", "--help", "-help":

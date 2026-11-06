@@ -16,7 +16,12 @@ wget https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.p
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-or with [Scoop](https://scoop.sh):
+The script downloads the latest release, checks its SHA-256 and adds `snisplit`
+to your PATH. Or download `snisplit_windows_amd64.exe` from
+[Releases](https://github.com/nguyenthanh1205tb/snisplit/releases/latest), rename it to
+`snisplit.exe` and run it from a terminal.
+
+Or with [Scoop](https://scoop.sh):
 
 ```powershell
 scoop bucket add snisplit https://github.com/nguyenthanh1205tb/snisplit
@@ -40,7 +45,8 @@ snisplit start            # run in the background, then restart Steam
 ```
 
 Start at login: `snisplit autostart on` (Windows, also shows a tray icon to start/stop
-the proxy, open the log and install updates) or `brew services start snisplit` (macOS/Linux).
+the proxy, open the log, run diagnostics and install updates) or
+`brew services start snisplit` (macOS/Linux).
 Show the tray icon now with `snisplit tray`.
 
 Something wrong? `snisplit doctor` checks the whole setup and says how to fix it.

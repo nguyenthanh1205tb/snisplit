@@ -34,13 +34,19 @@ Start at login: `snisplit autostart on` (Windows) or `brew services start snispl
 
 Other commands: `snisplit stop`, `snisplit status`, `snisplit hosts remove`.
 
+snisplit runs under a supervisor that restarts it if it crashes, and picks the
+split method that works for each site on its own (`--mode auto`).
+
 ## Other sites
 
-Put one hostname per line in a file (start from `snisplit hosts show`), then:
-
 ```sh
-snisplit hosts install --list mysites.txt
+snisplit check example.com                    # is it blocked, and does snisplit help?
+snisplit hosts add example.com cdn.example.com
+snisplit hosts del example.com
 ```
+
+Names you add are kept when you run `hosts install` again. For many names, use a
+file with one hostname per line: `snisplit hosts install --list mysites.txt`.
 
 ## Uninstall
 

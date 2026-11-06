@@ -25,7 +25,7 @@ type runOpts struct {
 	cfg    config
 	dns    string
 	preset string
-	list   string
+	lists  listFlag
 }
 
 func parseRunFlags(name string, args []string) *runOpts {
@@ -34,37 +34,46 @@ func parseRunFlags(name string, args []string) *runOpts {
 	fset.StringVar(&o.cfg.listen, "listen", "127.0.0.1", "address to listen on")
 	fset.IntVar(&o.cfg.port, "port", defaultPort, "HTTP proxy / PAC / status port")
 	fset.BoolVar(&o.cfg.transparent, "transparent", true, "also listen on ports 443 and 80 for names the hosts file points at 127.0.0.1")
-	fset.StringVar(&o.cfg.mode, "mode", "both", "how to split the ClientHello: "+strings.Join(fragModes, ", "))
+	fset.StringVar(&o.cfg.mode, "mode", "auto", "how to split the ClientHello: auto, "+strings.Join(fragModes, ", "))
 	fset.DurationVar(&o.cfg.delay, "delay", 10*time.Millisecond, "pause between pieces")
 	fset.DurationVar(&o.cfg.timeout, "timeout", 15*time.Second, "connect / handshake timeout")
 	fset.BoolVar(&o.cfg.verbose, "v", false, "verbose logging")
 	fset.StringVar(&o.dns, "dns", "doh", "resolver for upstream hosts: doh or system")
-	fset.StringVar(&o.preset, "preset", "steam", "built-in list for the PAC file ("+strings.Join(presets(), ", ")+")")
-	fset.StringVar(&o.list, "list", "", "use this list file instead of a preset")
+	fset.StringVar(&o.preset, "preset", "steam", "built-in lists for the PAC file, comma-separated ("+strings.Join(presets(), ", ")+", none)")
+	fset.Var(&o.lists, "list", "extra list file for the PAC file (repeatable)")
 	fset.Parse(args)
 	return o
 }
 
-func cmdRun(args []string) error {
-	o := parseRunFlags("run", args)
-	if !validMode(o.cfg.mode) {
-		return fmt.Errorf("invalid --mode %q (use %s)", o.cfg.mode, strings.Join(fragModes, ", "))
+// validate checks the options and loads the name lists.
+func (o *runOpts) validate() error {
+	if o.cfg.mode != "auto" && !validMode(o.cfg.mode) {
+		return fmt.Errorf("invalid --mode %q (use auto, %s)", o.cfg.mode, strings.Join(fragModes, ", "))
 	}
 	if o.dns != "doh" && o.dns != "system" {
 		return fmt.Errorf("invalid --dns %q (use doh or system)", o.dns)
 	}
-	names, err := loadNames(o.preset, o.list)
+	names, err := loadAll(o.preset, o.lists)
 	if err != nil {
 		return err
 	}
 	o.cfg.names = names
+	return nil
+}
+
+func cmdRun(args []string) error {
+	o := parseRunFlags("run", args)
+	if err := o.validate(); err != nil {
+		return err
+	}
+	log.SetFlags(log.Ltime)
 	if ip := net.ParseIP(o.cfg.listen); ip == nil || !ip.IsLoopback() {
 		log.Printf("WARNING: listening on %s exposes an open proxy to your network", o.cfg.listen)
 	}
-
-	log.SetFlags(log.Ltime)
-	log.Printf("snisplit %s  mode=%s delay=%s dns=%s list=%d names", version, o.cfg.mode, o.cfg.delay, o.dns, len(names))
+	log.Printf("snisplit %s  mode=%s delay=%s dns=%s list=%d names", version, o.cfg.mode, o.cfg.delay, o.dns, len(o.cfg.names))
 	p := newProxy(o.cfg, newResolver(o.dns == "doh"))
+	p.supervisorPID, _ = strconv.Atoi(os.Getenv("SNISPLIT_SUPERVISOR_PID"))
+	p.restarts, _ = strconv.Atoi(os.Getenv("SNISPLIT_RESTARTS"))
 	if err := p.listenAll(); err != nil {
 		return err
 	}
@@ -102,10 +111,12 @@ func getStatus(port int) (*statusInfo, error) {
 	return &s, nil
 }
 
+// cmdStart launches "snisplit supervise" in the background; the supervisor
+// runs the proxy and restarts it if it ever exits.
 func cmdStart(args []string) error {
 	o := parseRunFlags("start", args)
-	if !validMode(o.cfg.mode) {
-		return fmt.Errorf("invalid --mode %q", o.cfg.mode)
+	if err := o.validate(); err != nil {
+		return err
 	}
 	if s, err := getStatus(o.cfg.port); err == nil {
 		fmt.Printf("already running (pid %d, up %s)\n", s.PID, s.Uptime)
@@ -124,7 +135,7 @@ func cmdStart(args []string) error {
 		return err
 	}
 	defer f.Close()
-	cmd := exec.Command(exe, append([]string{"run"}, args...)...)
+	cmd := exec.Command(exe, append([]string{"supervise"}, args...)...)
 	cmd.Stdout, cmd.Stderr = f, f
 	cmd.SysProcAttr = detachAttr()
 	if err := cmd.Start(); err != nil {
@@ -139,7 +150,34 @@ func cmdStart(args []string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("proxy (pid %d) did not come up; see %s", pid, lp)
+	return fmt.Errorf("proxy (supervisor pid %d) did not come up; see %s", pid, lp)
+}
+
+// cmdSupervise runs the proxy as a child process and restarts it whenever it
+// exits, with exponential backoff (1s .. 30s). Not meant to be run by hand.
+func cmdSupervise(args []string) error {
+	log.SetFlags(log.Ltime)
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	backoff := time.Second
+	for restarts := 0; ; restarts++ {
+		cmd := exec.Command(exe, append([]string{"run"}, args...)...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.Env = append(os.Environ(),
+			"SNISPLIT_SUPERVISOR_PID="+strconv.Itoa(os.Getpid()),
+			"SNISPLIT_RESTARTS="+strconv.Itoa(restarts))
+		cmd.SysProcAttr = detachAttr()
+		began := time.Now()
+		err := cmd.Run()
+		if time.Since(began) > time.Minute {
+			backoff = time.Second // it ran fine for a while: restart quickly
+		}
+		log.Printf("supervisor: proxy exited (%v), restarting in %s", err, backoff)
+		time.Sleep(backoff)
+		backoff = min(backoff*2, 30*time.Second)
+	}
 }
 
 func cmdStop(args []string) error {
@@ -150,6 +188,11 @@ func cmdStop(args []string) error {
 	if err != nil {
 		fmt.Println("not running")
 		return nil
+	}
+	if s.SupervisorPID > 0 { // stop the supervisor first so it does not restart the proxy
+		if sp, err := os.FindProcess(s.SupervisorPID); err == nil {
+			sp.Kill()
+		}
 	}
 	proc, err := os.FindProcess(s.PID)
 	if err != nil {
@@ -177,6 +220,13 @@ func cmdStatus(args []string) error {
 	if s, err := getStatus(*port); err == nil {
 		fmt.Printf("running   pid %d, version %s, up %s, mode %s, transparent %v, port %d\n",
 			s.PID, s.Version, s.Uptime, s.Mode, s.Transparent, s.Port)
+		if s.SupervisorPID > 0 {
+			fmt.Printf("restarts  %d (supervisor pid %d)\n", s.Restarts, s.SupervisorPID)
+		}
+		fmt.Printf("traffic   %d connections, %d failed, %d needed another split mode\n", s.Connections, s.Failures, s.Retries)
+		if len(s.TopFailures) > 0 {
+			fmt.Printf("failing   %s\n", strings.Join(s.TopFailures, ", "))
+		}
 	} else {
 		fmt.Println("stopped")
 	}

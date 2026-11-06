@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,7 +85,7 @@ func TestFragmentModes(t *testing.T) {
 
 func TestHostsBlock(t *testing.T) {
 	orig := "# comment\r\n10.0.0.1 nas.local\r\n"
-	names := []string{"a.example", "b.example"}
+	names := mergeEntries([]string{"a.example", "b.example"}, nil)
 	once := applyHostsBlock(orig, names)
 	twice := applyHostsBlock(once, names)
 	if once != twice {
@@ -109,9 +111,55 @@ func TestParseNames(t *testing.T) {
 	if len(exactNames(got)) != 1 {
 		t.Fatal("exactNames kept a suffix")
 	}
-	steam, err := loadNames("steam", "")
+	steam, err := loadAll("steam", nil)
 	if err != nil || len(exactNames(steam)) < 30 {
 		t.Fatalf("steam preset: %v (%d)", err, len(steam))
+	}
+	if none, err := loadAll("none", nil); err != nil || len(none) != 0 {
+		t.Fatalf("preset none: %v %v", none, err)
+	}
+	if _, err := loadAll("nope", nil); err == nil {
+		t.Fatal("unknown preset accepted")
+	}
+	extra := filepath.Join(t.TempDir(), "extra.txt")
+	os.WriteFile(extra, []byte("x.example\nstore.steampowered.com\n"), 0o644)
+	merged, err := loadAll("steam", []string{extra})
+	if err != nil || len(merged) != len(steam)+1 {
+		t.Fatalf("merge: %v, %d names (steam %d)", err, len(merged), len(steam))
+	}
+}
+
+func TestNormalizeName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Example.com":                     "example.com",
+		"https://store.example.com/a?b=c": "store.example.com",
+		"cdn.example.com:443":             "cdn.example.com",
+		"example.com.":                    "example.com",
+	} {
+		if got := normalizeName(in); got != want {
+			t.Errorf("normalizeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// User-added names survive a reinstall of the list (unless --reset), and
+// "del" removes any name.
+func TestHostsUserEntries(t *testing.T) {
+	base := applyHostsBlock("10.0.0.1 nas\n", mergeEntries([]string{"a.example"}, nil))
+	withUser := applyHostsBlock(base, append(parseBlock(base), hostEntry{"mine.example", true}))
+	if !strings.Contains(withUser, "127.0.0.1 mine.example "+userMark) {
+		t.Fatalf("user mark missing: %q", withUser)
+	}
+	got := userEntries(withUser)
+	if len(got) != 1 || got[0].name != "mine.example" {
+		t.Fatalf("userEntries = %v", got)
+	}
+	reinstalled := applyHostsBlock(withUser, mergeEntries([]string{"a.example", "b.example"}, userEntries(withUser)))
+	if names := strings.Join(installedNames(reinstalled), ","); names != "a.example,b.example,mine.example" {
+		t.Fatalf("after reinstall: %s", names)
+	}
+	if reset := applyHostsBlock(withUser, mergeEntries([]string{"a.example"}, nil)); strings.Contains(reset, "mine.example") {
+		t.Fatal("reset kept the user name")
 	}
 }
 
@@ -221,5 +269,73 @@ func TestTransparentEndToEnd(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || !strings.HasPrefix(string(body), "hello example.com") {
 		t.Fatalf("got %d %q", resp.StatusCode, body)
+	}
+}
+
+// In auto mode a reset before the server answers makes the proxy retry with
+// the next split mode, and the mode that worked is remembered for the host.
+func TestAutoModeFallback(t *testing.T) {
+	p, pool, upPort := testProxy(t)
+
+	// "DPI" in front of the TLS server: resets the first two connections.
+	dpi, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dpi.Close()
+	var seen int
+	go func() {
+		for {
+			c, err := dpi.Accept()
+			if err != nil {
+				return
+			}
+			seen++
+			if seen <= 2 {
+				c.Read(make([]byte, 64))
+				c.(*net.TCPConn).SetLinger(0) // RST, like an SNI filter
+				c.Close()
+				continue
+			}
+			up, err := net.Dial("tcp", "127.0.0.1:"+upPort)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			go relay(c, c, up)
+		}
+	}()
+	_, dpiPort, _ := net.SplitHostPort(dpi.Addr().String())
+	p.cfg.tlsPort, _ = strconv.Atoi(dpiPort)
+	p.cfg.mode = "auto"
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go p.serve(ln, p.handleTransparentTLS)
+
+	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{ServerName: "example.com", RootCAs: pool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	io.WriteString(conn, "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("request through fallback failed: %v", err)
+	}
+	if r := p.stats.retries.Load(); r != 2 {
+		t.Errorf("retries = %d, want 2", r)
+	}
+	if m, _ := p.modes.Load("example.com"); m != autoModes[2] {
+		t.Errorf("remembered mode = %v, want %s", m, autoModes[2])
+	}
+	if got := p.modesFor("example.com")[0]; got != autoModes[2] {
+		t.Errorf("next attempt starts with %s, want %s", got, autoModes[2])
+	}
+	if st := p.status(); st.Connections != 1 || st.Failures != 0 {
+		t.Errorf("status = %+v", st)
 	}
 }

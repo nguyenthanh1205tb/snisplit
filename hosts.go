@@ -16,7 +16,13 @@ import (
 const (
 	hostsBegin = "# BEGIN snisplit"
 	hostsEnd   = "# END snisplit"
+	userMark   = "# user" // names added with "snisplit hosts add"
 )
+
+type hostEntry struct {
+	name string
+	user bool // added by the user; kept when the list is reinstalled
+}
 
 func hostsPath() string {
 	if runtime.GOOS == "windows" {
@@ -30,8 +36,8 @@ func hostsPath() string {
 }
 
 // applyHostsBlock returns content with the snisplit block replaced by entries
-// for names (or removed when names is empty). Other lines are kept as-is.
-func applyHostsBlock(content string, names []string) string {
+// (or removed when entries is empty). Other lines are kept as-is.
+func applyHostsBlock(content string, entries []hostEntry) string {
 	nl := "\n"
 	if strings.Contains(content, "\r\n") || (content == "" && runtime.GOOS == "windows") {
 		nl = "\r\n"
@@ -55,13 +61,17 @@ func applyHostsBlock(content string, names []string) string {
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]
 	}
-	if len(names) > 0 {
+	if len(entries) > 0 {
 		if len(out) > 0 {
 			out = append(out, "")
 		}
 		out = append(out, hostsBegin)
-		for _, n := range names {
-			out = append(out, "127.0.0.1 "+n)
+		for _, e := range entries {
+			line := "127.0.0.1 " + e.name
+			if e.user {
+				line += " " + userMark
+			}
+			out = append(out, line)
 		}
 		out = append(out, hostsEnd)
 	}
@@ -71,9 +81,9 @@ func applyHostsBlock(content string, names []string) string {
 	return strings.Join(out, nl) + nl
 }
 
-// installedNames lists the names currently in the snisplit block.
-func installedNames(content string) []string {
-	var names []string
+// parseBlock returns the entries currently in the snisplit block.
+func parseBlock(content string) []hostEntry {
+	var entries []hostEntry
 	in := false
 	for _, l := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
 		t := strings.TrimSpace(l)
@@ -83,12 +93,55 @@ func installedNames(content string) []string {
 		case t == hostsEnd:
 			in = false
 		case in:
+			comment := ""
+			if i := strings.IndexByte(t, '#'); i >= 0 {
+				comment, t = t[i:], t[:i]
+			}
 			if f := strings.Fields(t); len(f) >= 2 {
-				names = append(names, f[1:]...)
+				for _, n := range f[1:] {
+					entries = append(entries, hostEntry{n, strings.HasPrefix(comment, userMark)})
+				}
 			}
 		}
 	}
+	return entries
+}
+
+func installedNames(content string) []string {
+	var names []string
+	for _, e := range parseBlock(content) {
+		names = append(names, e.name)
+	}
 	return names
+}
+
+func userEntries(content string) []hostEntry {
+	var out []hostEntry
+	for _, e := range parseBlock(content) {
+		if e.user {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// mergeEntries combines list names with entries to keep (user additions).
+func mergeEntries(names []string, keep []hostEntry) []hostEntry {
+	seen := map[string]bool{}
+	var out []hostEntry
+	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, hostEntry{name: n})
+		}
+	}
+	for _, e := range keep {
+		if !seen[e.name] {
+			seen[e.name] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // writeHosts writes the file in place (keeping its owner and ACL), after
@@ -150,61 +203,155 @@ func flushDNS() {
 	}
 }
 
+const hostsUsage = `usage: snisplit hosts <command> [flags] [names]
+
+  install          write the list(s) to the hosts file (keeps names you added)
+  add <name>...    add hostnames to the snisplit block
+  del <name>...    remove hostnames from the snisplit block
+  remove           remove the whole snisplit block
+  show             print the names install would write
+
+All but "show" need Administrator (Windows) or sudo.`
+
 func cmdHosts(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: snisplit hosts install|remove|show [flags]")
+		return errors.New(hostsUsage)
 	}
 	sub := args[0]
 	fset := flag.NewFlagSet("hosts "+sub, flag.ExitOnError)
-	preset := fset.String("preset", "steam", "built-in list to use ("+strings.Join(presets(), ", ")+")")
-	list := fset.String("list", "", "use this file instead of a preset (one hostname per line)")
+	preset := fset.String("preset", "steam", "built-in lists, comma-separated ("+strings.Join(presets(), ", ")+", none)")
+	var lists listFlag
+	fset.Var(&lists, "list", "extra list file, one hostname per line (repeatable)")
 	file := fset.String("file", hostsPath(), "hosts file to edit")
+	reset := fset.Bool("reset", false, "install: drop the names added with 'hosts add'")
 	fset.Parse(args[1:])
+	rest := fset.Args()
+
+	readCur := func() (string, error) {
+		b, err := os.ReadFile(*file)
+		if err != nil {
+			return "", permHint(err)
+		}
+		return string(b), nil
+	}
 
 	switch sub {
 	case "show":
-		names, err := loadNames(*preset, *list)
+		names, err := loadAll(*preset, lists)
 		if err != nil {
 			return err
-		}
-		for _, n := range exactNames(names) {
-			fmt.Println(n)
 		}
 		cur, _ := os.ReadFile(*file)
+		entries := mergeEntries(exactNames(names), userEntries(string(cur)))
+		for _, e := range entries {
+			fmt.Println(e.name)
+		}
 		// summary on stderr so "snisplit hosts show > list.txt" gives a clean list
-		fmt.Fprintf(os.Stderr, "\n%d names; %d currently installed in %s\n", len(exactNames(names)), len(installedNames(string(cur))), *file)
+		fmt.Fprintf(os.Stderr, "\n%d names; %d currently installed in %s\n", len(entries), len(installedNames(string(cur))), *file)
 		return nil
+
 	case "install":
-		names, err := loadNames(*preset, *list)
+		names, err := loadAll(*preset, lists)
 		if err != nil {
 			return err
 		}
-		names = exactNames(names)
-		cur, err := os.ReadFile(*file)
+		cur, err := readCur()
 		if err != nil {
-			return permHint(err)
-		}
-		if err := writeHosts(*file, applyHostsBlock(string(cur), names)); err != nil {
 			return err
 		}
-		fmt.Printf("hosts: %d names now point to 127.0.0.1 (%s)\n", len(names), *file)
-		fmt.Printf("backup: %s.snisplit.bak\n", *file)
+		var keep []hostEntry
+		if !*reset {
+			keep = userEntries(cur)
+		}
+		entries := mergeEntries(exactNames(names), keep)
+		if len(entries) == 0 {
+			return errors.New("no hostnames to install (empty list); use 'snisplit hosts remove' to clear the block")
+		}
+		if err := writeHosts(*file, applyHostsBlock(cur, entries)); err != nil {
+			return err
+		}
+		fmt.Printf("hosts: %d names now point to 127.0.0.1 (%d added by you) in %s\n", len(entries), len(keep), *file)
 		fmt.Println("Keep the proxy running (snisplit start), otherwise these sites will not load.")
 		return nil
-	case "remove":
-		cur, err := os.ReadFile(*file)
-		if err != nil {
-			return permHint(err)
+
+	case "add":
+		if len(rest) == 0 {
+			return errors.New("usage: snisplit hosts add <name>...")
 		}
-		if len(installedNames(string(cur))) == 0 && !strings.Contains(string(cur), hostsBegin) {
+		cur, err := readCur()
+		if err != nil {
+			return err
+		}
+		entries := parseBlock(cur)
+		have := map[string]bool{}
+		for _, e := range entries {
+			have[e.name] = true
+		}
+		var added []string
+		for _, a := range rest {
+			n := normalizeName(a)
+			if n == "" || strings.ContainsAny(n, "* ") || strings.HasPrefix(n, ".") {
+				return fmt.Errorf("%q: the hosts file needs exact hostnames (no wildcards)", a)
+			}
+			if !have[n] {
+				have[n] = true
+				entries = append(entries, hostEntry{n, true})
+				added = append(added, n)
+			}
+		}
+		if len(added) == 0 {
+			fmt.Println("already in the hosts file:", strings.Join(rest, " "))
+			return nil
+		}
+		if err := writeHosts(*file, applyHostsBlock(cur, entries)); err != nil {
+			return err
+		}
+		fmt.Printf("added %s (%d names in total)\n", strings.Join(added, ", "), len(entries))
+		return nil
+
+	case "del":
+		if len(rest) == 0 {
+			return errors.New("usage: snisplit hosts del <name>...")
+		}
+		cur, err := readCur()
+		if err != nil {
+			return err
+		}
+		drop := map[string]bool{}
+		for _, a := range rest {
+			drop[normalizeName(a)] = true
+		}
+		var kept []hostEntry
+		for _, e := range parseBlock(cur) {
+			if !drop[e.name] {
+				kept = append(kept, e)
+			}
+		}
+		removed := len(parseBlock(cur)) - len(kept)
+		if removed == 0 {
+			fmt.Println("not in the hosts file:", strings.Join(rest, " "))
+			return nil
+		}
+		if err := writeHosts(*file, applyHostsBlock(cur, kept)); err != nil {
+			return err
+		}
+		fmt.Printf("removed %d name(s), %d left\n", removed, len(kept))
+		return nil
+
+	case "remove":
+		cur, err := readCur()
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(cur, hostsBegin) {
 			fmt.Println("no snisplit entries in", *file)
 			return nil
 		}
-		if err := writeHosts(*file, applyHostsBlock(string(cur), nil)); err != nil {
+		if err := writeHosts(*file, applyHostsBlock(cur, nil)); err != nil {
 			return err
 		}
 		fmt.Println("snisplit entries removed from", *file)
 		return nil
 	}
-	return fmt.Errorf("unknown hosts command %q (install, remove, show)", sub)
+	return fmt.Errorf("unknown hosts command %q\n\n%s", sub, hostsUsage)
 }

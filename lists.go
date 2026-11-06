@@ -22,26 +22,46 @@ func presets() []string {
 	return out
 }
 
-// loadNames reads a list from a file, or from a built-in preset.
-func loadNames(preset, file string) ([]string, error) {
-	var data []byte
-	var err error
-	if file != "" {
-		data, err = os.ReadFile(file)
-	} else {
-		data, err = listFS.ReadFile("lists/" + preset + ".txt")
-		if err != nil {
-			return nil, fmt.Errorf("unknown preset %q (available: %s)", preset, strings.Join(presets(), ", "))
+// listFlag is a repeatable, comma-separated flag value.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(v string) error {
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			*l = append(*l, s)
 		}
 	}
-	if err != nil {
-		return nil, err
+	return nil
+}
+
+// loadAll merges built-in presets (comma-separated; "none" for none) with the
+// given list files.
+func loadAll(presetCSV string, files []string) ([]string, error) {
+	var all []string
+	for _, p := range strings.Split(presetCSV, ",") {
+		p = strings.TrimSpace(strings.ToLower(p))
+		if p == "" || p == "none" {
+			continue
+		}
+		data, err := listFS.ReadFile("lists/" + p + ".txt")
+		if err != nil {
+			return nil, fmt.Errorf("unknown preset %q (available: %s, none)", p, strings.Join(presets(), ", "))
+		}
+		all = append(all, parseNames(string(data))...)
 	}
-	return parseNames(string(data)), nil
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, parseNames(string(data))...)
+	}
+	return dedupe(all), nil
 }
 
 func parseNames(s string) []string {
-	seen := map[string]bool{}
 	var out []string
 	for _, line := range strings.Split(s, "\n") {
 		if i := strings.IndexByte(line, '#'); i >= 0 {
@@ -49,13 +69,38 @@ func parseNames(s string) []string {
 		}
 		line = strings.ToLower(strings.TrimSpace(line))
 		line = strings.TrimPrefix(line, "*") // "*.example.com" == ".example.com"
-		if line == "" || seen[line] {
-			continue
+		if line != "" {
+			out = append(out, line)
 		}
-		seen[line] = true
-		out = append(out, line)
+	}
+	return dedupe(out)
+}
+
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
 	}
 	return out
+}
+
+// normalizeName turns user input like "https://Example.com:443/path" into "example.com".
+func normalizeName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.LastIndexByte(s, ':'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSuffix(s, ".")
 }
 
 // exactNames drops ".suffix" entries, which the hosts file cannot express.

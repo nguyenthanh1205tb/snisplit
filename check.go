@@ -14,24 +14,32 @@ import (
 	"time"
 )
 
-// cmdCheck runs a real TLS handshake to each host twice - once normally and
-// once with the ClientHello split - and reports which ones the ISP blocks.
+// cmdCheck runs real TLS handshakes to each host - once normally and once with
+// the ClientHello split - and reports which ones the ISP blocks.
 func cmdCheck(args []string) error {
 	fset := flag.NewFlagSet("check", flag.ExitOnError)
-	mode := fset.String("mode", "both", "split mode to test: "+strings.Join(fragModes, ", "))
+	mode := fset.String("mode", "auto", "split mode to test: auto (try each), "+strings.Join(fragModes, ", "))
 	delay := fset.Duration("delay", 10*time.Millisecond, "pause between pieces")
 	timeout := fset.Duration("timeout", 8*time.Second, "per-handshake timeout")
-	preset := fset.String("preset", "steam", "built-in list to test when no hosts are given")
-	list := fset.String("list", "", "list file to test when no hosts are given")
+	preset := fset.String("preset", "steam", "built-in lists to test when no hosts are given")
+	var lists listFlag
+	fset.Var(&lists, "list", "list file to test when no hosts are given (repeatable)")
 	all := fset.Bool("all", false, "test every name in the list (default: a sample of 8)")
 	fset.Parse(args)
-	if !validMode(*mode) {
+	if *mode != "auto" && !validMode(*mode) {
 		return fmt.Errorf("invalid --mode %q", *mode)
 	}
+	modes := []string{*mode}
+	if *mode == "auto" {
+		modes = autoModes
+	}
 
-	hosts := fset.Args()
+	var hosts []string
+	for _, h := range fset.Args() {
+		hosts = append(hosts, normalizeName(h))
+	}
 	if len(hosts) == 0 {
-		names, err := loadNames(*preset, *list)
+		names, err := loadAll(*preset, lists)
 		if err != nil {
 			return err
 		}
@@ -60,21 +68,29 @@ func cmdCheck(args []string) error {
 				return
 			}
 			ip := ips[0].String()
-			rows[i] = row{h, ip,
-				probe(h, ip, "none", 0, *timeout),
-				probe(h, ip, *mode, *delay, *timeout)}
+			r := row{h, ip, probe(h, ip, "none", 0, *timeout), ""}
+			for _, m := range modes {
+				r.split = probe(h, ip, m, *delay, *timeout)
+				if r.split == "OK" {
+					if *mode == "auto" {
+						r.split = "OK (" + m + ")"
+					}
+					break
+				}
+			}
+			rows[i] = r
 		}(i, h)
 	}
 	wg.Wait()
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "HOST\tIP\tDIRECT\tSPLIT ("+*mode+")")
+	fmt.Fprintln(tw, "HOST\tIP\tDIRECT\tSPLIT")
 	blocked, fixed := 0, 0
 	for _, r := range rows {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.host, r.ip, r.direct, r.split)
 		if r.direct != "OK" {
 			blocked++
-			if r.split == "OK" {
+			if strings.HasPrefix(r.split, "OK") {
 				fixed++
 			}
 		}
@@ -87,7 +103,7 @@ func cmdCheck(args []string) error {
 	case fixed == blocked:
 		fmt.Printf("%d blocked, all reachable with splitting -> snisplit will work.\n", blocked)
 	default:
-		fmt.Printf("%d blocked, %d reachable with splitting. Try another --mode or a longer --delay.\n", blocked, fixed)
+		fmt.Printf("%d blocked, %d reachable with splitting. Try a longer --delay; the rest may be blocked by IP.\n", blocked, fixed)
 	}
 	return nil
 }

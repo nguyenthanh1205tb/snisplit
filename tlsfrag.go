@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,8 +13,18 @@ import (
 // plus generous overhead).
 const maxRecordLen = 16384 + 2048
 
-// fragModes lists the supported ways of cutting the ClientHello.
-var fragModes = []string{"both", "record", "tcp", "none"}
+// fragModes lists the supported ways of cutting the ClientHello. See plan.
+var fragModes = []string{"both", "record", "tcp", "chunk", "oob", "disorder", "slow", "none"}
+
+// slowDelayNS is the pause (ns) "slow" leaves between pieces, longer than a
+// DPI box usually waits to put a stream back together. The strategy sets it.
+var slowDelayNS atomic.Int64
+
+func init() { slowDelayNS.Store(int64(300 * time.Millisecond)) }
+
+// sleepForSend gives the kernel time to put a low-TTL piece on the wire before
+// the TTL is restored.
+func sleepForSend() { time.Sleep(5 * time.Millisecond) }
 
 // findSNI returns the offset and length of the host_name inside a TLS record
 // holding a ClientHello. ok is false if rec is not a ClientHello or has no SNI.
@@ -91,6 +102,114 @@ func fragment(rec []byte, mode string) [][]byte {
 	return [][]byte{rec}
 }
 
+// piece is one write of a split ClientHello.
+type piece struct {
+	data   []byte
+	lowTTL bool          // sent with TTL 1: dropped by the first router, then resent by the kernel
+	oob    bool          // the last byte is sent as TCP urgent data, which the server's stack drops
+	wait   time.Duration // pause after this piece; 0 means the configured delay
+}
+
+// plan turns a ClientHello record into the writes for mode:
+//
+//	both, record, tcp - see fragment
+//	chunk    - the name cut into 4-byte TLS records, each its own TCP write,
+//	           after a first write of a single byte
+//	oob      - two records with one extra urgent byte between them: a DPI box
+//	           that does not drop urgent data parses garbage
+//	disorder - two records, the first sent with TTL 1 so it never reaches the
+//	           ISP; the box sees the second half first, the server gets the
+//	           first half when the kernel retransmits it (adds ~0.3-1 s)
+//	slow     - like both, with a long pause between pieces
+func plan(rec []byte, mode string) []piece {
+	off, n, ok := findSNI(rec)
+	if !ok || mode == "none" {
+		return []piece{{data: rec}}
+	}
+	wrap := func(bs [][]byte) []piece {
+		ps := make([]piece, len(bs))
+		for i, b := range bs {
+			ps[i] = piece{data: b}
+		}
+		return ps
+	}
+	switch mode {
+	case "chunk":
+		var cuts []int // offsets into the record body
+		for i := 2; i < n; i += 4 {
+			cuts = append(cuts, off-5+i)
+		}
+		recs := splitRecords(rec, cuts)
+		ps := []piece{{data: recs[0][:1]}, {data: recs[0][1:]}}
+		for _, r := range recs[1:] {
+			ps = append(ps, piece{data: r})
+		}
+		return ps
+	case "oob":
+		recs := splitRecords(rec, []int{off - 5 + max(1, n/2)})
+		first := append(append([]byte(nil), recs[0]...), 'x')
+		return []piece{{data: first, oob: true}, {data: recs[1]}}
+	case "disorder":
+		recs := splitRecords(rec, []int{off - 5 + max(1, n/2)})
+		return []piece{{data: recs[0], lowTTL: true}, {data: recs[1]}}
+	case "slow":
+		ps := wrap(fragment(rec, "both"))
+		for i := range ps {
+			ps[i].wait = time.Duration(slowDelayNS.Load())
+		}
+		return ps
+	}
+	return wrap(fragment(rec, mode))
+}
+
+// splitRecords cuts the handshake data of one TLS record at the given body
+// offsets (ascending) and returns one complete record per part.
+func splitRecords(rec []byte, cuts []int) [][]byte {
+	body := rec[5:]
+	var out [][]byte
+	prev := 0
+	for _, c := range append(cuts, len(body)) {
+		if c <= prev || c > len(body) {
+			continue
+		}
+		part := body[prev:c]
+		r := make([]byte, 0, 5+len(part))
+		r = append(r, rec[0], rec[1], rec[2], byte(len(part)>>8), byte(len(part)))
+		out = append(out, append(r, part...))
+		prev = c
+	}
+	return out
+}
+
+// sendPieces writes the pieces of a plan. lowTTL and oob need a real TCP
+// socket; on anything else they degrade to plain writes.
+func sendPieces(c net.Conn, ps []piece, delay time.Duration) error {
+	for i, p := range ps {
+		var err error
+		switch {
+		case p.lowTTL:
+			err = writeLowTTL(c, p.data)
+		case p.oob:
+			err = writeOOB(c, p.data)
+		default:
+			_, err = c.Write(p.data)
+		}
+		if err != nil {
+			return err
+		}
+		if i < len(ps)-1 {
+			w := p.wait
+			if w == 0 {
+				w = delay
+			}
+			if w > 0 {
+				time.Sleep(w)
+			}
+		}
+	}
+	return nil
+}
+
 // readRecord reads one TLS record. If the stream does not start with a TLS
 // handshake record, the first 5 bytes are returned unchanged.
 func readRecord(r io.Reader) ([]byte, error) {
@@ -146,11 +265,11 @@ func (c *splitConn) Write(b []byte) (int, error) {
 	if l > len(b) {
 		return c.Conn.Write(b)
 	}
-	pieces := fragment(b[:l], c.mode)
+	pieces := plan(b[:l], c.mode)
 	if l < len(b) {
-		pieces = append(pieces, b[l:])
+		pieces = append(pieces, piece{data: b[l:]})
 	}
-	if err := writePieces(c.Conn, pieces, c.delay); err != nil {
+	if err := sendPieces(c.Conn, pieces, c.delay); err != nil {
 		return 0, err
 	}
 	return len(b), nil

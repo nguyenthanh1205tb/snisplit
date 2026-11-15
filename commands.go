@@ -22,15 +22,17 @@ import (
 const defaultPort = 8881
 
 type runOpts struct {
-	cfg    config
-	dns    string
-	preset string
-	lists  listFlag
+	cfg      config
+	dns      string
+	preset   string
+	lists    listFlag
+	upstream string
 }
 
 func parseRunFlags(name string, args []string) *runOpts {
 	o := &runOpts{}
 	fset := flag.NewFlagSet(name, flag.ExitOnError)
+	fset.StringVar(&o.upstream, "upstream", loadSettings().Upstream, "last-resort proxy for sites no split gets through: socks5://host:port or http://host:port (saved with 'snisplit upstream')")
 	fset.StringVar(&o.cfg.listen, "listen", "127.0.0.1", "address to listen on")
 	fset.IntVar(&o.cfg.port, "port", defaultPort, "HTTP proxy / PAC / status port")
 	fset.BoolVar(&o.cfg.transparent, "transparent", true, "also listen on ports 443 and 80 for names the hosts file points at 127.0.0.1")
@@ -43,6 +45,11 @@ func parseRunFlags(name string, args []string) *runOpts {
 	fset.Var(&o.lists, "list", "extra list file for the PAC file (repeatable)")
 	fset.Bool("autostart", false, "marks a login entry made with 'autostart on --no-tray' (no effect)")
 	fset.Parse(args)
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == "delay" {
+			o.cfg.delaySet = true
+		}
+	})
 	return o
 }
 
@@ -59,6 +66,11 @@ func (o *runOpts) validate() error {
 		return err
 	}
 	o.cfg.names = names
+	up, err := parseUpstream(o.upstream)
+	if err != nil {
+		return err
+	}
+	o.cfg.upstream = up
 	return nil
 }
 
@@ -71,13 +83,17 @@ func cmdRun(args []string) error {
 	if ip := net.ParseIP(o.cfg.listen); ip == nil || !ip.IsLoopback() {
 		log.Printf("WARNING: listening on %s exposes an open proxy to your network", o.cfg.listen)
 	}
-	log.Printf("snisplit %s  mode=%s delay=%s dns=%s list=%d names", version, o.cfg.mode, o.cfg.delay, o.dns, len(o.cfg.names))
-	p := newProxy(o.cfg, newResolver(o.dns == "doh"))
+	p := newProxy(o.cfg, newResolver(o.dns == "doh"), loadState(statePath()))
+	p.applyStrategy(loadStrategy())
+	st := p.strat.Load()
+	log.Printf("snisplit %s  mode=%s delay=%s dns=%s list=%d names strategy=%d upstream=%s",
+		version, o.cfg.mode, p.delay(), o.dns, len(o.cfg.names), st.Version, orNone(redactURL(o.cfg.upstream)))
 	p.supervisorPID, _ = strconv.Atoi(os.Getenv("SNISPLIT_SUPERVISOR_PID"))
 	p.restarts, _ = strconv.Atoi(os.Getenv("SNISPLIT_RESTARTS"))
 	if err := p.listenAll(); err != nil {
 		return err
 	}
+	p.background(true)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
@@ -224,16 +240,99 @@ func cmdStatus(args []string) error {
 		if s.SupervisorPID > 0 {
 			fmt.Printf("restarts  %d (supervisor pid %d)\n", s.Restarts, s.SupervisorPID)
 		}
-		fmt.Printf("traffic   %s, %d failed, %d needed another split mode\n", plural(s.Connections, "connection"), s.Failures, s.Retries)
+		fmt.Printf("traffic   %s, %d failed, %d needed another split mode, %d via upstream\n",
+			plural(s.Connections, "connection"), s.Failures, s.Retries, s.ViaUpstream)
 		if len(s.TopFailures) > 0 {
 			fmt.Printf("failing   %s\n", strings.Join(s.TopFailures, ", "))
+		}
+		fmt.Printf("health    %s\n", describeHealth(s.Health))
+		fmt.Printf("strategy  version %d\n", s.Strategy)
+		fmt.Printf("upstream  %s\n", orNone(s.Upstream))
+		if len(s.Learned) > 0 {
+			fmt.Printf("learned   %d blocked sites found in browser mode: %s\n", len(s.Learned), strings.Join(s.Learned[:min(5, len(s.Learned))], ", "))
 		}
 	} else {
 		fmt.Println("stopped")
 	}
 	fmt.Printf("hosts     %d names installed in %s\n", n, hostsPath())
+	fmt.Printf("browser   %s\n", onOff(loadSettings().Browser))
 	fmt.Printf("log       %s\n", logPath())
 	return nil
+}
+
+func describeHealth(h health) string {
+	when := ""
+	if !h.Checked.IsZero() {
+		when = fmt.Sprintf(" (checked %s ago)", time.Since(h.Checked).Round(time.Minute))
+	}
+	switch h.State {
+	case "open":
+		return h.Host + " is not blocked right now" + when
+	case "ok":
+		return fmt.Sprintf("OK: %s gets through with %q%s", h.Host, h.Mode, when)
+	case "upstream":
+		return "every split method is blocked; going through the upstream proxy" + when
+	case "blocked":
+		return "BLOCKED: " + h.Detail + when + " - see 'snisplit doctor'"
+	}
+	return "not checked yet"
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
+// restartIfRunning restarts the background proxy so it picks up new settings.
+func restartIfRunning() error {
+	if _, err := getStatus(defaultPort); err != nil {
+		return nil
+	}
+	if err := cmdStop(nil); err != nil {
+		return err
+	}
+	return cmdStart(nil)
+}
+
+func cmdUpstream(args []string) error {
+	s := loadSettings()
+	if len(args) == 0 {
+		u, _ := parseUpstream(s.Upstream)
+		fmt.Printf("upstream: %s\n", orNone(redactURL(u)))
+		fmt.Println("set with:  snisplit upstream socks5://host:port   (or http://host:port, user:pass@ allowed)")
+		fmt.Println("remove:    snisplit upstream off")
+		fmt.Println("It is used only for sites that no split method gets through.")
+		return nil
+	}
+	if args[0] == "off" {
+		s.Upstream = ""
+	} else {
+		u, err := parseUpstream(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("testing %s ... ", redactURL(u))
+		if r := probeUpstream(u, "www.cloudflare.com", 10*time.Second); r != "OK" {
+			fmt.Println(r)
+			return fmt.Errorf("could not reach https://www.cloudflare.com through %s (%s); not saved", redactURL(u), r)
+		}
+		fmt.Println("OK")
+		s.Upstream = args[0]
+	}
+	if err := saveSettings(s); err != nil {
+		return err
+	}
+	fmt.Printf("upstream: %s\n", orNone(s.Upstream))
+	return restartIfRunning()
 }
 
 // ---------------------------------------------------------------- autostart

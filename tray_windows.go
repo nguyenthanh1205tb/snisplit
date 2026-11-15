@@ -126,6 +126,8 @@ func (t *tray) ready() {
 		t.run("autostart", "on")
 	}
 	mLogin := systray.AddMenuItemCheckbox("Start at login", "Start the proxy and this icon when you log in", autostartEnabled())
+	mBrowser := systray.AddMenuItemCheckbox("Browser mode (all sites)",
+		"Send every site in your browsers through snisplit; blocked ones are found and split automatically", loadSettings().Browser)
 	mLog := systray.AddMenuItem("Open log", "Open the proxy log file")
 	mDoctor := systray.AddMenuItem("Run diagnostics", "Open a window with the results of 'snisplit doctor'")
 	mList := systray.AddMenuItem("Update site list", "Download the newest site list (asks for administrator rights)")
@@ -135,6 +137,7 @@ func (t *tray) ready() {
 	mQuit := systray.AddMenuItem("Quit icon (proxy keeps running)", "")
 
 	var lastFailures int64 = -1
+	lastHealth := ""
 	refresh := func() {
 		s, err := getStatus(defaultPort)
 		if err != nil {
@@ -152,9 +155,27 @@ func (t *tray) ready() {
 			icon = iconWarn
 		}
 		lastFailures = s.Failures
+		state := fmt.Sprintf("Running %s (up %s)", s.Version, s.Uptime)
+		switch s.Health.State {
+		case "blocked":
+			icon, state = iconWarn, "Blocked: no method gets through - run diagnostics"
+		case "upstream":
+			state = "Running through the upstream proxy"
+		}
+		if s.Health.State != lastHealth { // tell the user when things get worse or recover
+			switch {
+			case s.Health.State == "blocked":
+				notify("snisplit cannot get through", "Your ISP seems to have changed how it blocks. Open the snisplit icon and run diagnostics.")
+			case s.Health.State == "upstream":
+				notify("snisplit", "Every split method is blocked; using your upstream proxy for blocked sites.")
+			case lastHealth == "blocked" || lastHealth == "upstream":
+				notify("snisplit", "Getting through again ("+s.Health.Mode+").")
+			}
+			lastHealth = s.Health.State
+		}
 		systray.SetIcon(icon)
-		systray.SetTooltip(fmt.Sprintf("snisplit %s: running\n%s, %d failed", s.Version, plural(s.Connections, "connection"), s.Failures))
-		mState.SetTitle(fmt.Sprintf("Running %s (up %s)", s.Version, s.Uptime))
+		systray.SetTooltip(fmt.Sprintf("snisplit %s: %s\n%s, %d failed", s.Version, s.Health.State, plural(s.Connections, "connection"), s.Failures))
+		mState.SetTitle(state)
 		mTraffic.SetTitle(fmt.Sprintf("%s, %d failed, %s", plural(s.Connections, "connection"), s.Failures, plural(int64(s.Restarts), "restart")))
 		mTraffic.Show()
 		mStart.Disable()
@@ -224,6 +245,17 @@ func (t *tray) ready() {
 				} else {
 					mLogin.Uncheck()
 				}
+			case <-mBrowser.ClickedCh:
+				if mBrowser.Checked() {
+					t.run("browser", "off")
+				} else {
+					t.run("browser", "on")
+				}
+				if loadSettings().Browser {
+					mBrowser.Check()
+				} else {
+					mBrowser.Uncheck()
+				}
 			case <-mLog.ClickedCh:
 				open := exec.Command("rundll32", "url.dll,FileProtocolHandler", logPath())
 				open.Start()
@@ -269,6 +301,22 @@ func (t *tray) ready() {
 			}
 		}
 	}()
+}
+
+// notify shows a Windows toast notification through PowerShell. The text is
+// passed in environment variables, never pasted into the script.
+func notify(title, msg string) {
+	const script = `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$x = $t.GetElementsByTagName('text')
+$x.Item(0).AppendChild($t.CreateTextNode($env:SNISPLIT_TITLE)) > $null
+$x.Item(1).AppendChild($t.CreateTextNode($env:SNISPLIT_MSG)) > $null
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($t))`
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
+	cmd.Env = append(os.Environ(), "SNISPLIT_TITLE="+title, "SNISPLIT_MSG="+msg)
+	cmd.SysProcAttr = detachAttr()
+	cmd.Start()
 }
 
 func (t *tray) exit() {

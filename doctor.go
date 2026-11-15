@@ -42,6 +42,18 @@ func cmdDoctor(args []string) error {
 			d.warn(fmt.Sprintf("%d of %s failed", status.Failures, plural(status.Connections, "connection")),
 				"failing: "+strings.Join(status.TopFailures, ", "))
 		}
+		switch h := status.Health; h.State {
+		case "ok", "open":
+			d.ok("self-test: %s", describeHealth(h))
+		case "upstream":
+			d.warn("self-test: "+describeHealth(h), "it works, but only through your upstream proxy")
+		case "blocked":
+			d.fail("self-test: "+describeHealth(h),
+				"run 'snisplit update' (a newer version may have a way around it), or set an upstream proxy: snisplit upstream socks5://host:port")
+		default:
+			d.info("self-test: %s", describeHealth(h))
+		}
+		d.info("strategy version %d, %d sites learned in browser mode, upstream %s", status.Strategy, len(status.Learned), orNone(status.Upstream))
 	}
 
 	// 2. hosts file
@@ -86,8 +98,31 @@ func cmdDoctor(args []string) error {
 	}
 
 	// 4. DNS-over-HTTPS, used by snisplit to find the real servers
+	strat := loadStrategy()
+	res := newResolver(true)
+	res.setEndpoints(strat.DoH)
+	var dohOK, dohBad []string
+	for _, ep := range strat.DoH {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, _, err := res.doh(ctx, ep, sample)
+		cancel()
+		host := strings.TrimSuffix(strings.TrimPrefix(ep, "https://"), "/dns-query")
+		if err != nil {
+			dohBad = append(dohBad, host)
+		} else {
+			dohOK = append(dohOK, host)
+		}
+	}
+	switch {
+	case len(dohOK) == 0:
+		d.fail("no DNS-over-HTTPS server answers", "snisplit falls back to system DNS and the last good answers; check your connection")
+	case len(dohBad) > 0:
+		d.info("DNS-over-HTTPS: %d of %d servers answer (not reachable: %s)", len(dohOK), len(strat.DoH), strings.Join(dohBad, ", "))
+	default:
+		d.ok("DNS-over-HTTPS: all %d servers answer", len(dohOK))
+	}
 	ctx, cancel = context.WithTimeout(context.Background(), 8*time.Second)
-	ips, err := newResolver(true).lookup(ctx, sample)
+	ips, err := res.lookup(ctx, sample)
 	cancel()
 	if err != nil || len(ips) == 0 {
 		d.fail("cannot resolve "+sample+" over DNS-over-HTTPS or system DNS", "check your internet connection")
@@ -113,7 +148,26 @@ func cmdDoctor(args []string) error {
 		}
 	}
 
-	// 7. Windows: login entry and other bypass tools
+	// 7. upstream proxy and browser mode
+	set := loadSettings()
+	if u, err := parseUpstream(set.Upstream); err != nil {
+		d.fail("saved upstream proxy is invalid: "+err.Error(), "snisplit upstream off")
+	} else if u != nil {
+		if r := probeUpstream(u, "www.cloudflare.com", 10*time.Second); r == "OK" {
+			d.ok("upstream proxy %s works", redactURL(u))
+		} else {
+			d.warn(fmt.Sprintf("upstream proxy %s does not work (%s)", redactURL(u), r), "start it, or remove it: snisplit upstream off")
+		}
+	}
+	if set.Browser {
+		if cur, _ := systemPAC(); cur != browserPAC() {
+			d.warn("browser mode is on, but the system proxy setting was changed to "+orNone(cur), "snisplit browser on")
+		} else {
+			d.ok("browser mode on: browsers use %s", browserPAC())
+		}
+	}
+
+	// 8. Windows: login entry and other bypass tools
 	if runtime.GOOS == "windows" {
 		switch v := autostartValue(); {
 		case v == "":

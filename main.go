@@ -29,6 +29,10 @@ Usage:
   snisplit hosts del <name>...  remove hostnames (admin/sudo)
   snisplit hosts remove         remove all snisplit entries from the hosts file (admin/sudo)
   snisplit hosts show           print the hostnames that would be installed
+  snisplit browser on|off       send every site in your browsers through snisplit;
+                                blocked ones are found and split automatically
+  snisplit upstream <url>|off   last-resort proxy (socks5:// or http://) for sites
+                                no split method gets through
   snisplit tray                 show a notification-area icon (Windows)
   snisplit autostart on|off     start the proxy and tray icon when you log in (Windows)
   snisplit update [--check]     update to the latest release
@@ -72,6 +76,10 @@ func main() {
 		err = cmdDoctor(args)
 	case "tray":
 		err = cmdTray(args)
+	case "browser":
+		err = cmdBrowser(args)
+	case "upstream":
+		err = cmdUpstream(args)
 	case "version", "--version", "-version":
 		fmt.Println("snisplit", version)
 	case "help", "-h", "--help", "-help":

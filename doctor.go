@@ -188,6 +188,9 @@ func cmdDoctor(args []string) error {
 		switch v := autostartValue(); {
 		case v == "":
 			d.warn("snisplit does not start at login", "snisplit autostart on")
+		case autostartDisabled():
+			d.warn("snisplit is turned off in Task Manager's Startup apps, so it does not start at login",
+				"snisplit autostart on (or tick 'Start at login' in the tray icon menu)")
 		case legacyAutostart(v):
 			d.warn("the login entry starts the proxy without the tray icon", "snisplit autostart on")
 		default:

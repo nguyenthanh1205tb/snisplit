@@ -505,3 +505,21 @@ func TestListDiffAndFetch(t *testing.T) {
 		}
 	}
 }
+
+// Task Manager's StartupApproved data: an odd first byte means turned off.
+func TestStartupDisabled(t *testing.T) {
+	for _, c := range []struct {
+		data []byte
+		want bool
+	}{
+		{nil, false},
+		{[]byte{0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, false},
+		{[]byte{0x03, 0, 0, 0, 0x69, 0x48, 0xef, 0x3d, 0xf1, 0x61, 0xdd, 0x01}, true},
+		{[]byte{0x06}, false},
+		{[]byte{0x07}, true},
+	} {
+		if got := startupDisabled(c.data); got != c.want {
+			t.Errorf("startupDisabled(% x) = %v, want %v", c.data, got, c.want)
+		}
+	}
+}

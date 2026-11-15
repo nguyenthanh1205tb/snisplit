@@ -332,9 +332,12 @@ func cmdHosts(args []string) error {
 		if len(entries) == 0 {
 			return errors.New("no hostnames to install (empty list); use 'snisplit hosts remove' to clear the block")
 		}
-		if err := writeHosts(*file, applyHostsBlock(cur, entries)); err != nil {
-			return err
+		if next := applyHostsBlock(cur, entries); next != cur { // unchanged: no admin rights needed
+			if err := writeHosts(*file, next); err != nil {
+				return err
+			}
 		}
+		grantLowPorts()
 		fmt.Printf("hosts: %d names now point to 127.0.0.1 (%d added by you) in %s\n", len(entries), len(keep), *file)
 		fmt.Println("Keep the proxy running (snisplit start), otherwise these sites will not load.")
 		return nil

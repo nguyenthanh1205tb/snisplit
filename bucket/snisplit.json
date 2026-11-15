@@ -1,16 +1,16 @@
 {
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Bypass SNI-based DPI blocking (e.g. Steam in Vietnam) by splitting the TLS ClientHello",
   "homepage": "https://github.com/nguyenthanh1205tb/snisplit",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.7.0/snisplit_windows_amd64.exe#/snisplit.exe",
-      "hash": "62e006854375cf6072c0789bc37f52b50db62529506e12de2787ae271538910b"
+      "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.7.1/snisplit_windows_amd64.exe#/snisplit.exe",
+      "hash": "baa3f553d2750152edb98c4901eb92b712b9031d4d1d02300c731ddc28004903"
     },
     "arm64": {
-      "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.7.0/snisplit_windows_arm64.exe#/snisplit.exe",
-      "hash": "5a15ba2c2911191cb542b42b82c9fdbed0f5c56be91318c0566590eb2e996262"
+      "url": "https://github.com/nguyenthanh1205tb/snisplit/releases/download/v0.7.1/snisplit_windows_arm64.exe#/snisplit.exe",
+      "hash": "daa08b0f2bbedbc886a6676af0df37aea36d2bfc279c46e082ed703d27fab186"
     }
   },
   "bin": "snisplit.exe",

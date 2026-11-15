@@ -12,6 +12,7 @@ import (
 
 	"fyne.io/systray"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 
 	"github.com/nguyenthanh1205tb/snisplit/internal/logo"
 )
@@ -85,18 +86,38 @@ func (t *tray) run(args ...string) error {
 	return cmd.Run()
 }
 
-// autostartValue returns the login entry ("" when there is none).
+// autostartValue returns the login entry ("" when there is none). It reads
+// the registry directly (no reg.exe), so the tray can check it often.
 func autostartValue() string {
-	cmd := exec.Command("reg", "query", runKey, "/v", "snisplit")
-	cmd.SysProcAttr = detachAttr()
-	out, err := cmd.Output()
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
 	if err != nil {
 		return ""
 	}
-	return regValue(string(out))
+	defer k.Close()
+	v, _, err := k.GetStringValue("snisplit")
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
-func autostartEnabled() bool { return autostartValue() != "" }
+// autostartDisabled reports whether the login entry was turned off in Task
+// Manager's Startup apps page (the entry stays, but Windows skips it).
+func autostartDisabled() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run`, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	data, _, err := k.GetBinaryValue("snisplit")
+	if err != nil {
+		return false
+	}
+	return startupDisabled(data)
+}
+
+// autostartEnabled reports whether snisplit really starts at login.
+func autostartEnabled() bool { return autostartValue() != "" && !autostartDisabled() }
 
 // runElevated starts exe with args through UAC ("Run as administrator").
 func runElevated(exe, args string) error {
@@ -225,6 +246,13 @@ func (t *tray) ready() {
 			select {
 			case <-tick.C:
 				refresh()
+				if on := autostartEnabled(); on != mLogin.Checked() { // changed in Task Manager
+					if on {
+						mLogin.Check()
+					} else {
+						mLogin.Uncheck()
+					}
+				}
 			case <-mStart.ClickedCh:
 				t.run("start")
 				refresh()

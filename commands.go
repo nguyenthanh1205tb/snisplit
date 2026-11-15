@@ -345,6 +345,17 @@ func cmdUpstream(args []string) error {
 
 const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 
+// approvedKey is where Task Manager's Startup apps page records an entry the
+// user turned off: the Run value stays, and a binary value of the same name
+// here starts with an odd byte (03 disabled, 02 enabled).
+const approvedKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run`
+
+// startupDisabled reports whether approval data (raw bytes) marks an entry
+// as turned off in Task Manager. No data means enabled.
+func startupDisabled(data []byte) bool {
+	return len(data) > 0 && data[0]&1 == 1
+}
+
 // regValue extracts the data of a REG_SZ value from "reg query" output.
 func regValue(out string) string {
 	for _, line := range strings.Split(out, "\n") {
@@ -394,9 +405,12 @@ func cmdAutostart(args []string) error {
 		if out, err := exec.Command("reg", "add", runKey, "/v", "snisplit", "/t", "REG_SZ", "/d", val, "/f").CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
+		// Undo "Disable" from Task Manager, so the entry really runs again.
+		exec.Command("reg", "delete", approvedKey, "/v", "snisplit", "/f").Run()
 		fmt.Printf("autostart on: %s when you log in\n", what)
 	case "off":
 		exec.Command("reg", "delete", runKey, "/v", "snisplit", "/f").Run()
+		exec.Command("reg", "delete", approvedKey, "/v", "snisplit", "/f").Run()
 		fmt.Println("autostart off")
 	default:
 		return fmt.Errorf("usage: snisplit autostart on|off")

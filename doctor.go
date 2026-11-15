@@ -159,6 +159,22 @@ func cmdDoctor(args []string) error {
 			d.warn(fmt.Sprintf("upstream proxy %s does not work (%s)", redactURL(u), r), "start it, or remove it: snisplit upstream off")
 		}
 	}
+	if set.Adblock {
+		switch a := status; {
+		case a == nil:
+		case a.Adblock == nil:
+			d.warn("ad blocking is on but the running proxy has not loaded it", "restart it: snisplit stop, then snisplit start")
+		case a.Adblock.Domains == 0:
+			d.warn("ad blocking is on but no list is loaded yet", "snisplit adblock update")
+		case time.Since(a.Adblock.Updated) > 72*time.Hour:
+			d.warn(fmt.Sprintf("the ad block list is %s old", time.Since(a.Adblock.Updated).Round(time.Hour)), "snisplit adblock update")
+		default:
+			d.ok("ad blocking: %d domains, %d requests blocked", a.Adblock.Domains, a.Adblock.Blocked)
+		}
+		if !set.Browser {
+			d.warn("ad blocking only works in browser mode", "snisplit browser on")
+		}
+	}
 	if set.Browser {
 		if cur, _ := systemPAC(); cur != browserPAC() {
 			d.warn("browser mode is on, but the system proxy setting was changed to "+orNone(cur), "snisplit browser on")

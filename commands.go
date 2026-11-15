@@ -93,6 +93,7 @@ func cmdRun(args []string) error {
 	if err := p.listenAll(); err != nil {
 		return err
 	}
+	p.applyAdblock(loadSettings())
 	p.background(true)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -250,6 +251,11 @@ func cmdStatus(args []string) error {
 		fmt.Printf("upstream  %s\n", orNone(s.Upstream))
 		if len(s.Learned) > 0 {
 			fmt.Printf("learned   %d blocked sites found in browser mode: %s\n", len(s.Learned), strings.Join(s.Learned[:min(5, len(s.Learned))], ", "))
+		}
+		if a := s.Adblock; a != nil {
+			fmt.Printf("adblock   on: %d domains, %d requests blocked\n", a.Domains, a.Blocked)
+		} else {
+			fmt.Println("adblock   off")
 		}
 	} else {
 		fmt.Println("stopped")

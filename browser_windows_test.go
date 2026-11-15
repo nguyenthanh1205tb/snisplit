@@ -3,32 +3,32 @@
 package main
 
 import (
-	"os/exec"
 	"testing"
+	"unsafe"
 )
 
-// The PAC setting round-trips through the registry (a scratch key, not the
-// real Internet Settings).
-func TestSystemPACRoundTrip(t *testing.T) {
-	old := inetKey
-	inetKey = `HKCU\Software\snisplit-test`
-	defer func() {
-		exec.Command("reg", "delete", inetKey, "/f").Run()
-		inetKey = old
-	}()
-	if v, _ := systemPAC(); v != "" {
-		t.Fatalf("empty key reads %q", v)
+// The structs passed to WinINet must match the 64-bit Windows layout.
+func TestPerConnLayout(t *testing.T) {
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		t.Skip("only 64-bit Windows is released")
 	}
-	if err := setSystemPAC(browserPAC()); err != nil {
-		t.Fatal(err)
+	if s := unsafe.Sizeof(perConnOption{}); s != 16 {
+		t.Errorf("INTERNET_PER_CONN_OPTIONW size %d, want 16", s)
 	}
-	if v, _ := systemPAC(); v != browserPAC() {
-		t.Fatalf("read back %q", v)
+	if s := unsafe.Sizeof(perConnList{}); s != 32 {
+		t.Errorf("INTERNET_PER_CONN_OPTION_LISTW size %d, want 32", s)
 	}
-	if err := setSystemPAC(""); err != nil {
-		t.Fatal(err)
+	var o perConnOption
+	o.setDword(5)
+	if o.dword() != 5 {
+		t.Error("dword round trip")
 	}
-	if v, _ := systemPAC(); v != "" {
-		t.Fatalf("after removal %q", v)
+}
+
+// Reading the current settings must work (it changes nothing).
+func TestProxySettingsReadable(t *testing.T) {
+	flags, _, err := proxySettings()
+	if err != nil || flags&proxyTypeDirect == 0 && flags == 0 {
+		t.Fatalf("flags %#x, err %v", flags, err)
 	}
 }

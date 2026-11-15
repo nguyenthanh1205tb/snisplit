@@ -6,16 +6,18 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
-  id-token: write      # build provenance attestations
-  attestations: write
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the release, update the Scoop manifest
+      id-token: write      # build provenance attestations
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: stable
       - run: go test -count=1 ./...
@@ -44,13 +46,17 @@ jobs:
       # from this commit by this workflow. Anyone can check it with
       # "gh attestation verify <file> --repo nguyenthanh1205tb/snisplit".
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        id: attest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: 'dist/*'
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
+          # the signed provenance itself, also attached to the release
+          cp "$BUNDLE" dist/provenance.intoto.jsonl
           cat > notes.md <<EOF
           **Install / update (Windows):** \`irm https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.ps1 | iex\`
           · macOS/Linux: \`brew install nguyenthanh1205tb/tap/snisplit\`

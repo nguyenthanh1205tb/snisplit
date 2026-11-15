@@ -1,10 +1,10 @@
 module github.com/nguyenthanh1205tb/snisplit
 
-go 1.22
+go 1.25.0
 
 require (
 	fyne.io/systray v1.12.2
-	golang.org/x/sys v0.15.0
+	golang.org/x/sys v0.44.0
 )
 
 require github.com/godbus/dbus/v5 v5.1.0 // indirect

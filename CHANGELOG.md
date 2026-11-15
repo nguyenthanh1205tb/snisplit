@@ -5,7 +5,12 @@
 - Every release file now comes with a build provenance attestation from GitHub:
   `gh attestation verify <file> --repo nguyenthanh1205tb/snisplit` proves it was
   built from this repository by GitHub Actions
-- Code scanning (CodeQL), dependency updates (Dependabot) and an OpenSSF Scorecard
+- Code scanning (CodeQL), dependency updates (Dependabot) and an OpenSSF Scorecard;
+  GitHub Actions pinned to commit hashes, workflow permissions kept to the minimum
+- Fuzz tests for everything that parses outside data (ClientHello, DNS answers,
+  block lists, the strategy file)
+- `golang.org/x/sys` updated to v0.44.0 (GO-2026-5024; the affected function was
+  never called by snisplit)
 - `SECURITY.md`, this changelog, issue templates, and a "what snisplit does on your
   computer" section in the README and on the website
 

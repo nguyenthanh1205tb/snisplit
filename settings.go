@@ -12,6 +12,11 @@ type settings struct {
 	Upstream string `json:"upstream,omitempty"`
 	Browser  bool   `json:"browser,omitempty"`
 	PrevPAC  string `json:"prev_pac,omitempty"` // system PAC URL before browser mode, restored by "browser off"
+
+	Adblock     bool     `json:"adblock,omitempty"`
+	AdblockList string   `json:"adblock_list,omitempty"` // light, normal, pro or a URL ("" = normal)
+	Allow       []string `json:"allow,omitempty"`        // never blocked
+	Block       []string `json:"block,omitempty"`        // blocked as well as the list
 }
 
 var settingsPath = func() string {

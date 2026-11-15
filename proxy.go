@@ -23,7 +23,10 @@ import (
 	"time"
 )
 
-const statusPath = "/snisplit/status"
+const (
+	statusPath = "/snisplit/status"
+	reloadPath = "/snisplit/reload"
+)
 
 type config struct {
 	listen      string
@@ -102,6 +105,7 @@ type proxy struct {
 	strat  atomic.Pointer[strategy]
 	best   atomic.Value // string: the mode the last health check found working
 	health atomic.Pointer[health]
+	ads    atomic.Pointer[blocker] // nil when ad blocking is off
 
 	supervisorPID int // set when started by "snisplit start"
 	restarts      int
@@ -243,6 +247,15 @@ func (p *proxy) background(fetchRemote bool) {
 		for range time.Tick(time.Minute) {
 			if err := p.state.save(); err != nil {
 				log.Printf("saving %s: %v", p.state.path, err)
+			}
+		}
+	}()
+	go func() { // keep the ad block list fresh
+		for range time.Tick(6 * time.Hour) {
+			if b := p.ads.Load(); b != nil {
+				if _, _, updated := b.info(); time.Since(updated) > 24*time.Hour {
+					p.refreshAdblock(loadSettings().AdblockList)
+				}
 			}
 		}
 	}()
@@ -600,6 +613,10 @@ func (p *proxy) handleConnect(c net.Conn, br *bufio.Reader, target string) {
 	}
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	port, _ := strconv.Atoi(portS)
+	if p.adBlocked(host) {
+		p.refuse(c, host)
+		return
+	}
 
 	if port != p.cfg.httpsPort() { // not HTTPS: plain tunnel
 		up, ip, err := p.dial(host, port)
@@ -627,6 +644,10 @@ func (p *proxy) handleConnect(c net.Conn, br *bufio.Reader, target string) {
 
 func (p *proxy) handlePlainHTTP(c net.Conn, br *bufio.Reader, req *http.Request) {
 	host := req.URL.Hostname()
+	if p.adBlocked(host) {
+		p.refuse(c, host)
+		return
+	}
 	port, _ := strconv.Atoi(req.URL.Port())
 	if port == 0 {
 		port = 80
@@ -688,6 +709,9 @@ func (p *proxy) handleLocal(c net.Conn, req *http.Request) {
 	case statusPath:
 		b, _ := json.Marshal(p.status())
 		writeResponse(c, "application/json", b)
+	case reloadPath: // re-read settings.json (ad blocking) without dropping connections
+		p.applyAdblock(loadSettings())
+		writeResponse(c, "text/plain", []byte("ok\n"))
 	default:
 		io.WriteString(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 	}
@@ -716,11 +740,25 @@ type statusInfo struct {
 	Strategy      int      `json:"strategy"`
 	Upstream      string   `json:"upstream,omitempty"`
 	Learned       []string `json:"learned,omitempty"`
+	Adblock       *adStats `json:"adblock,omitempty"`
+}
+
+type adStats struct {
+	Domains int       `json:"domains"`
+	Blocked int64     `json:"blocked"`
+	Source  string    `json:"source,omitempty"`
+	Updated time.Time `json:"updated,omitempty"`
 }
 
 func (p *proxy) status() statusInfo {
 	learned := p.state.learnedNames()
+	var ads *adStats
+	if b := p.ads.Load(); b != nil {
+		n, src, updated := b.info()
+		ads = &adStats{Domains: n, Blocked: b.blocked.Load(), Source: src, Updated: updated}
+	}
 	return statusInfo{
+		Adblock:       ads,
 		PID:           os.Getpid(),
 		SupervisorPID: p.supervisorPID,
 		Restarts:      p.restarts,

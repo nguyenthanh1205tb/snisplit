@@ -128,6 +128,7 @@ func (t *tray) ready() {
 	mLogin := systray.AddMenuItemCheckbox("Start at login", "Start the proxy and this icon when you log in", autostartEnabled())
 	mBrowser := systray.AddMenuItemCheckbox("Browser mode (all sites)",
 		"Send every site in your browsers through snisplit; blocked ones are found and split automatically", loadSettings().Browser)
+	mAds := systray.AddMenuItemCheckbox("Block ads", "Refuse ad, tracker and malware domains (needs browser mode)", loadSettings().Adblock)
 	mLog := systray.AddMenuItem("Open log", "Open the proxy log file")
 	mDoctor := systray.AddMenuItem("Run diagnostics", "Open a window with the results of 'snisplit doctor'")
 	mList := systray.AddMenuItem("Update site list", "Download the newest site list (asks for administrator rights)")
@@ -255,6 +256,21 @@ func (t *tray) ready() {
 					mBrowser.Check()
 				} else {
 					mBrowser.Uncheck()
+				}
+			case <-mAds.ClickedCh:
+				if mAds.Checked() {
+					t.run("adblock", "off")
+				} else {
+					t.run("adblock", "on")
+					if !loadSettings().Browser { // ad blocking needs browser mode
+						t.run("browser", "on")
+						mBrowser.Check()
+					}
+				}
+				if loadSettings().Adblock {
+					mAds.Check()
+				} else {
+					mAds.Uncheck()
 				}
 			case <-mLog.ClickedCh:
 				open := exec.Command("rundll32", "url.dll,FileProtocolHandler", logPath())

@@ -64,6 +64,18 @@ Browsers then send every site through snisplit. Sites that are not blocked go
 straight through; a site that gets blocked is split from then on, without adding
 it to any list.
 
+Block ads and trackers in every browser at the same time (also a tray menu item):
+
+```sh
+snisplit adblock on                  # off to undo
+snisplit adblock allow example.com   # if a site breaks
+```
+
+It uses [HaGeZi Multi NORMAL](https://github.com/hagezi/dns-blocklists) and
+[hostsVN](https://github.com/bigdargon/hostsVN) (~235k domains, updated daily). It
+blocks whole domains, so empty ad boxes stay and ads served from a site's own domain
+(YouTube) get through; use an ad-blocking browser extension for those.
+
 ## When the ISP blocks harder
 
 snisplit tries to stay a step ahead on its own:

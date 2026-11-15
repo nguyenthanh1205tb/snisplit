@@ -37,6 +37,7 @@ Usage:
   snisplit tray                 show a notification-area icon (Windows)
   snisplit autostart on|off     start the proxy and tray icon when you log in (Windows)
   snisplit update [--check]     update to the latest release
+  snisplit uninstall            undo everything snisplit changed and remove it
   snisplit version              print the version
 
 Typical setup (Steam):
@@ -81,6 +82,8 @@ func main() {
 		err = cmdBrowser(args)
 	case "adblock":
 		err = cmdAdblock(args)
+	case "uninstall":
+		err = cmdUninstall(args)
 	case "upstream":
 		err = cmdUpstream(args)
 	case "version", "--version", "-version":

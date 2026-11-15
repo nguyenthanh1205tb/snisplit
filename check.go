@@ -31,7 +31,9 @@ func cmdCheck(args []string) error {
 	}
 	modes := []string{*mode}
 	if *mode == "auto" {
-		modes = autoModes
+		st := loadStrategy()
+		modes = st.Modes
+		slowDelayNS.Store(int64(st.SlowDelayMS) * int64(time.Millisecond))
 	}
 
 	var hosts []string

@@ -54,8 +54,35 @@ Something wrong? `snisplit doctor` checks the whole setup and says how to fix it
 Other commands: `snisplit stop`, `snisplit status`, `snisplit update`,
 `snisplit hosts update` (newest site list from GitHub), `snisplit hosts remove`.
 
-snisplit runs under a supervisor that restarts it if it crashes, and picks the
-split method that works for each site on its own (`--mode auto`).
+## Any blocked website in your browser
+
+```sh
+snisplit browser on       # off to undo
+```
+
+Browsers then send every site through snisplit. Sites that are not blocked go
+straight through; a site that gets blocked is split from then on, without adding
+it to any list.
+
+## When the ISP blocks harder
+
+snisplit tries to stay a step ahead on its own:
+
+- **7 ways to split**: `both`, `record`, `tcp`, `chunk`, `disorder` (first piece sent
+  with a TTL too low to reach the ISP), `slow`, `oob`. The first one that gets through
+  is remembered per site. `snisplit check` shows which ones work from your network.
+- **Blocked addresses**: other addresses of the site are tried, and the one that works is remembered.
+- **DNS**: 8 DNS-over-HTTPS providers, and the last good answers are kept for when all of them are blocked.
+- **Self-test** every few hours; the tray icon turns amber and Windows shows a notice if nothing gets through.
+- **New tricks without an update**: the order of methods, timings and DNS servers come from
+  [`lists/strategy.json`](lists/strategy.json), refreshed daily.
+
+If the ISP blocks everything a split can beat, give snisplit a proxy to fall back on for
+those sites only, for example [Cloudflare WARP](https://one.one.one.one/) in proxy mode:
+
+```sh
+snisplit upstream socks5://127.0.0.1:40000     # off to remove
+```
 
 ## Other sites
 
@@ -71,6 +98,7 @@ file with one hostname per line: `snisplit hosts install --list mysites.txt`.
 ## Uninstall
 
 ```sh
+snisplit browser off
 snisplit stop
 snisplit autostart off
 snisplit hosts remove     # as Administrator / with sudo

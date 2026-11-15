@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -23,19 +25,17 @@ import (
 
 const statusPath = "/snisplit/status"
 
-// autoModes is the order "--mode auto" tries; the mode that last worked for a
-// host is tried first.
-var autoModes = []string{"both", "record", "tcp"}
-
 type config struct {
 	listen      string
 	port        int
 	transparent bool
 	mode        string // a fragModes value, or "auto"
 	delay       time.Duration
+	delaySet    bool // --delay given: the strategy file must not change it
 	timeout     time.Duration
 	verbose     bool
 	names       []string // hostnames / .suffixes routed through the proxy (PAC)
+	upstream    *url.URL // last-resort tunnel, nil for none
 
 	tlsPort int // upstream HTTPS port; 0 means 443 (tests override it)
 }
@@ -48,9 +48,9 @@ func (c config) httpsPort() int {
 }
 
 type proxyStats struct {
-	conns, fails, retries atomic.Int64
-	mu                    sync.Mutex
-	hostFails             map[string]int
+	conns, fails, retries, viaUpstream atomic.Int64
+	mu                                 sync.Mutex
+	hostFails                          map[string]int
 }
 
 func (s *proxyStats) fail(host string) {
@@ -80,12 +80,28 @@ func (s *proxyStats) top(n int) []string {
 	return out
 }
 
+// health is the result of the periodic self-test against the canary hosts.
+type health struct {
+	State   string    `json:"state"` // unknown, open (not blocked), ok, upstream, blocked
+	Mode    string    `json:"mode,omitempty"`
+	Host    string    `json:"host,omitempty"`
+	Detail  string    `json:"detail,omitempty"`
+	Checked time.Time `json:"checked,omitempty"`
+}
+
 type proxy struct {
 	cfg     config
 	res     *resolver
+	state   *state
 	started time.Time
 	stats   proxyStats
-	modes   sync.Map // host -> split mode that last worked
+
+	exact    map[string]bool // listed names
+	suffixes []string        // listed ".domain" entries
+
+	strat  atomic.Pointer[strategy]
+	best   atomic.Value // string: the mode the last health check found working
+	health atomic.Pointer[health]
 
 	supervisorPID int // set when started by "snisplit start"
 	restarts      int
@@ -94,10 +110,52 @@ type proxy struct {
 	listeners []net.Listener
 }
 
-func newProxy(cfg config, res *resolver) *proxy {
-	p := &proxy{cfg: cfg, res: res, started: time.Now()}
+func newProxy(cfg config, res *resolver, st *state) *proxy {
+	if st == nil {
+		st = loadState("")
+	}
+	p := &proxy{cfg: cfg, res: res, state: st, started: time.Now(), exact: map[string]bool{}}
+	res.state = st
 	p.stats.hostFails = map[string]int{}
+	for _, n := range cfg.names {
+		if strings.HasPrefix(n, ".") {
+			p.suffixes = append(p.suffixes, n)
+		} else {
+			p.exact[n] = true
+		}
+	}
+	p.best.Store("")
+	p.health.Store(&health{State: "unknown"})
+	builtin, _ := parseStrategy(builtinStrategy)
+	p.applyStrategy(builtin)
 	return p
+}
+
+// applyStrategy switches to s: split-mode order, pauses and DoH servers.
+func (p *proxy) applyStrategy(s *strategy) {
+	p.strat.Store(s)
+	slowDelayNS.Store(int64(s.SlowDelayMS) * int64(time.Millisecond))
+	p.res.setEndpoints(s.DoH)
+}
+
+func (p *proxy) delay() time.Duration {
+	if p.cfg.delaySet {
+		return p.cfg.delay
+	}
+	return time.Duration(p.strat.Load().DelayMS) * time.Millisecond
+}
+
+// listed reports whether host is in the configured lists.
+func (p *proxy) listed(host string) bool {
+	if p.exact[host] {
+		return true
+	}
+	for _, s := range p.suffixes {
+		if host == s[1:] || strings.HasSuffix(host, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *proxy) debugf(format string, a ...any) {
@@ -151,6 +209,7 @@ func (p *proxy) close() {
 	for _, l := range p.listeners {
 		l.Close()
 	}
+	p.state.save()
 }
 
 func (p *proxy) serve(ln net.Listener, h func(net.Conn)) {
@@ -175,84 +234,303 @@ func (p *proxy) serve(ln net.Listener, h func(net.Conn)) {
 	}
 }
 
-// dial connects to host:port using our resolver, trying up to three addresses.
-func (p *proxy) dial(host string, port int) (net.Conn, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.timeout)
-	defer cancel()
-	ips, err := p.res.lookup(ctx, host)
-	if err != nil {
-		return nil, "", err
-	}
-	ips = append([]net.IP(nil), ips...) // do not reorder the resolver's cached slice
-	rand.Shuffle(len(ips), func(i, j int) { ips[i], ips[j] = ips[j], ips[i] })
-	var lastErr error
-	d := net.Dialer{Timeout: p.cfg.timeout}
-	for _, ip := range ips[:min(3, len(ips))] {
-		c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
-		if err == nil {
-			return c, ip.String(), nil
+// ---------------------------------------------------------------- background
+
+// background runs the periodic jobs of a long-running proxy: saving what it
+// learned, fetching a newer strategy and the health self-test.
+func (p *proxy) background(fetchRemote bool) {
+	go func() {
+		for range time.Tick(time.Minute) {
+			if err := p.state.save(); err != nil {
+				log.Printf("saving %s: %v", p.state.path, err)
+			}
 		}
-		lastErr = err
+	}()
+	if fetchRemote {
+		go func() {
+			time.Sleep(time.Minute)
+			for {
+				if s, err := fetchStrategy(p.strat.Load()); err != nil {
+					p.debugf("strategy update: %v", err)
+				} else if s != nil {
+					log.Printf("strategy updated to version %d (modes %s)", s.Version, strings.Join(s.Modes, ", "))
+					p.applyStrategy(s)
+				}
+				time.Sleep(24 * time.Hour)
+			}
+		}()
 	}
-	return nil, "", lastErr
+	go func() {
+		time.Sleep(20 * time.Second)
+		for {
+			h := p.checkHealth()
+			p.health.Store(h)
+			log.Printf("health: %s %s %s", h.State, h.Mode, h.Detail)
+			wait := 3 * time.Hour
+			if h.State == "blocked" || h.State == "unknown" {
+				wait = 15 * time.Minute
+			}
+			time.Sleep(wait)
+		}
+	}()
 }
 
-// modesFor returns the split modes to try for host, best guess first.
-func (p *proxy) modesFor(host string) []string {
+// checkHealth runs real TLS handshakes to a canary host: direct, then with
+// each split mode in strategy order, then through the upstream proxy. The
+// first mode that works becomes the first one tried for new hosts.
+func (p *proxy) checkHealth() *health {
+	h := &health{State: "unknown", Checked: time.Now()}
+	for _, host := range p.strat.Load().Canary {
+		ctx, cancel := context.WithTimeout(context.Background(), p.cfg.timeout)
+		ips, err := p.res.lookup(ctx, host)
+		cancel()
+		if err != nil {
+			h.Detail = "DNS: " + err.Error()
+			continue
+		}
+		ip := ips[0].String()
+		h.Host = host
+		const t = 8 * time.Second
+		if probe(host, ip, "none", 0, t) == "OK" {
+			h.State, h.Detail = "open", "not blocked right now"
+			return h
+		}
+		for _, m := range p.modesFor(host, true) {
+			if probe(host, ip, m, p.delay(), t) == "OK" {
+				h.State, h.Mode = "ok", m
+				p.best.Store(m)
+				return h
+			}
+		}
+		if p.cfg.upstream != nil {
+			r := probeUpstream(p.cfg.upstream, host, t)
+			if r == "OK" {
+				h.State, h.Mode = "upstream", "upstream"
+				return h
+			}
+			h.Detail = "upstream: " + r
+		}
+		h.State = "blocked"
+		if h.Detail == "" {
+			h.Detail = "every split method failed for " + host
+		}
+		return h
+	}
+	return h
+}
+
+func probeUpstream(up *url.URL, host string, timeout time.Duration) string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	c, err := dialUpstream(ctx, up, host, 443, timeout)
+	if err != nil {
+		return "NO CONNECT"
+	}
+	tc := tls.Client(c, &tls.Config{ServerName: host, NextProtos: []string{"http/1.1"}})
+	tc.SetDeadline(time.Now().Add(timeout))
+	err = tc.Handshake()
+	tc.Close()
+	return classify(err)
+}
+
+// ---------------------------------------------------------------- routing
+
+// modesFor returns the split modes to try for host, best guess first. Hosts
+// not in the lists (browser mode) are tried unsplit first.
+func (p *proxy) modesFor(host string, listed bool) []string {
 	if p.cfg.mode != "auto" {
 		return []string{p.cfg.mode}
 	}
 	var order []string
-	if m, ok := p.modes.Load(host); ok {
-		order = append(order, m.(string))
-	}
-	for _, m := range autoModes {
-		if len(order) == 0 || order[0] != m {
-			order = append(order, m)
+	add := func(m string) {
+		if m == "" || m == "upstream" {
+			return
 		}
+		for _, x := range order {
+			if x == m {
+				return
+			}
+		}
+		order = append(order, m)
+	}
+	if r, ok := p.state.route(host); ok {
+		add(r.Mode)
+	}
+	if !listed && !p.state.isLearned(host) {
+		add("none")
+	}
+	add(p.best.Load().(string))
+	for _, m := range p.strat.Load().Modes {
+		add(m)
 	}
 	return order
 }
 
-// openTLS connects to host:port and sends the ClientHello split, trying the
-// next mode whenever the connection dies before the server answers (what an
-// SNI filter's reset looks like). It returns the upstream connection and the
-// server's first bytes, which the caller must forward to the client.
-func (p *proxy) openTLS(host string, port int, hello []byte) (up net.Conn, first []byte, ip, mode string, err error) {
+// candidateIPs returns up to three addresses for host, the one that last
+// worked first.
+func (p *proxy) candidateIPs(ctx context.Context, host string) ([]net.IP, error) {
+	ips, err := p.res.lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips = append([]net.IP(nil), ips...) // do not reorder the resolver's cached slice
+	rand.Shuffle(len(ips), func(i, j int) { ips[i], ips[j] = ips[j], ips[i] })
+	if r, ok := p.state.route(host); ok && r.IP != "" {
+		if good := net.ParseIP(r.IP); good != nil {
+			rest := []net.IP{good}
+			found := false
+			for _, ip := range ips {
+				if ip.Equal(good) {
+					found = true
+				} else {
+					rest = append(rest, ip)
+				}
+			}
+			if found || time.Since(r.At) < 6*time.Hour {
+				ips = rest
+			}
+		}
+	}
+	return ips[:min(3, len(ips))], nil
+}
+
+// dial connects to host:port (no TLS tricks), trying up to three addresses
+// and then the upstream proxy.
+func (p *proxy) dial(host string, port int) (net.Conn, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.timeout)
+	defer cancel()
+	ips, err := p.candidateIPs(ctx, host)
+	if err == nil {
+		d := net.Dialer{Timeout: min(p.cfg.timeout, 8*time.Second)}
+		for _, ip := range ips {
+			c, derr := d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
+			if derr == nil {
+				return c, ip.String(), nil
+			}
+			err = derr
+		}
+	}
+	if p.cfg.upstream != nil {
+		uctx, ucancel := context.WithTimeout(context.Background(), p.cfg.timeout)
+		defer ucancel()
+		if c, uerr := dialUpstream(uctx, p.cfg.upstream, host, port, p.cfg.timeout); uerr == nil {
+			p.stats.viaUpstream.Add(1)
+			return c, "upstream", nil
+		}
+	}
+	return nil, "", err
+}
+
+// openTLS connects to host:port and sends the ClientHello, trying every split
+// mode on up to three addresses until the server answers. A connection that
+// dies before the server's first byte is what an SNI filter's reset looks
+// like; one that cannot even connect means the address is blocked, so the
+// next address is tried. When nothing works it goes through the upstream
+// proxy. It returns the connection and the server's first bytes, which the
+// caller must forward to the client.
+func (p *proxy) openTLS(host string, port int, hello []byte) (up net.Conn, first []byte, via string, err error) {
 	_, _, hasSNI := findSNI(hello)
-	modes := p.modesFor(host)
+	listed := p.listed(host)
+	modes := p.modesFor(host, listed)
 	if !hasSNI {
 		modes = modes[:1]
 	}
-	for i, m := range modes {
-		if i > 0 {
-			p.stats.retries.Add(1)
-			p.debugf("RETRY %s with mode %s (%v)", host, m, err)
+	if r, ok := p.state.route(host); ok && r.Mode == "upstream" && p.cfg.upstream != nil && time.Since(r.At) < 6*time.Hour {
+		if up, first, err = p.openUpstream(host, port, hello); err == nil {
+			return up, first, "upstream", nil
 		}
-		up, ip, err = p.dial(host, port)
-		if err != nil {
-			return nil, nil, "", "", err
-		}
-		if err = writePieces(up, fragment(hello, m), p.cfg.delay); err == nil {
-			if !hasSNI {
-				return up, nil, ip, m, nil
-			}
-			up.SetReadDeadline(time.Now().Add(p.cfg.timeout))
-			buf := make([]byte, 16<<10)
-			var n int
-			n, err = up.Read(buf)
-			up.SetReadDeadline(time.Time{})
-			if n > 0 {
-				p.modes.Store(host, m)
-				return up, buf[:n], ip, m, nil
-			}
-			if err == nil {
-				err = io.ErrUnexpectedEOF
-			}
-		}
-		up.Close()
 	}
-	return nil, nil, ip, "", fmt.Errorf("blocked with every split mode (last error: %v)", err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.timeout)
+	ips, lastErr := p.candidateIPs(ctx, host)
+	cancel()
+	deadline := time.Now().Add(2 * p.cfg.timeout)
+	attempts, total := 0, len(ips)*len(modes)
+	d := net.Dialer{Timeout: min(p.cfg.timeout, 8*time.Second)}
+ips:
+	for _, ip := range ips {
+		for _, m := range modes {
+			if time.Now().After(deadline) {
+				break ips
+			}
+			if attempts++; attempts > 1 {
+				p.stats.retries.Add(1)
+				p.debugf("RETRY %s via %s with %s (%v)", host, ip, m, lastErr)
+			}
+			c, derr := d.Dial("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
+			if derr != nil {
+				lastErr = derr
+				continue ips // this address is unreachable: no point trying other modes on it
+			}
+			if werr := sendPieces(c, plan(hello, m), p.delay()); werr != nil {
+				c.Close()
+				lastErr = werr
+				continue
+			}
+			if !hasSNI {
+				return c, nil, ip.String() + " (" + m + ")", nil
+			}
+			wait := p.cfg.timeout
+			if attempts < total {
+				wait = min(wait, 7*time.Second)
+			}
+			c.SetReadDeadline(time.Now().Add(wait))
+			buf := make([]byte, 16<<10)
+			n, rerr := c.Read(buf)
+			c.SetReadDeadline(time.Time{})
+			if n > 0 {
+				if listed || m != "none" {
+					p.state.setRoute(host, ip.String(), m)
+				}
+				if !listed && m != "none" {
+					if !p.state.isLearned(host) {
+						log.Printf("LEARN %s is blocked; it will be split from now on", host)
+					}
+					p.state.learn(host)
+				}
+				return c, buf[:n], ip.String() + " (" + m + ")", nil
+			}
+			if rerr == nil {
+				rerr = io.ErrUnexpectedEOF
+			}
+			lastErr = rerr
+			c.Close()
+		}
+	}
+	if p.cfg.upstream != nil {
+		if up, first, err = p.openUpstream(host, port, hello); err == nil {
+			return up, first, "upstream", nil
+		}
+		lastErr = fmt.Errorf("%v; %v", lastErr, err)
+	}
+	return nil, nil, "", fmt.Errorf("blocked with every split mode (last error: %v)", lastErr)
+}
+
+func (p *proxy) openUpstream(host string, port int, hello []byte) (net.Conn, []byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.timeout)
+	defer cancel()
+	c, err := dialUpstream(ctx, p.cfg.upstream, host, port, p.cfg.timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := c.Write(hello); err != nil {
+		c.Close()
+		return nil, nil, err
+	}
+	c.SetReadDeadline(time.Now().Add(p.cfg.timeout))
+	buf := make([]byte, 16<<10)
+	n, err := c.Read(buf)
+	c.SetReadDeadline(time.Time{})
+	if n == 0 {
+		c.Close()
+		if err == nil {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, nil, fmt.Errorf("upstream: %v", err)
+	}
+	p.stats.viaUpstream.Add(1)
+	p.state.setRoute(host, "", "upstream")
+	return c, buf[:n], nil
 }
 
 // relay copies both ways until either side finishes, then closes both.
@@ -276,7 +554,7 @@ func (p *proxy) readHello(c net.Conn, r io.Reader) ([]byte, error) {
 // ClientHello and relays the rest of the session.
 func (p *proxy) forwardTLS(c net.Conn, clientR io.Reader, host string, port int, hello []byte) {
 	p.stats.conns.Add(1)
-	up, first, ip, mode, err := p.openTLS(host, port, hello)
+	up, first, via, err := p.openTLS(host, port, hello)
 	if err != nil {
 		p.stats.fail(host)
 		log.Printf("FAIL  %s:%d  %v", host, port, err)
@@ -290,7 +568,7 @@ func (p *proxy) forwardTLS(c net.Conn, clientR io.Reader, host string, port int,
 			return
 		}
 	}
-	log.Printf("TLS   %s via %s (%s)", host, ip, mode)
+	p.debugf("TLS   %s via %s", host, via)
 	relay(c, clientR, up)
 }
 
@@ -320,6 +598,7 @@ func (p *proxy) handleConnect(c net.Conn, br *bufio.Reader, target string) {
 	if err != nil {
 		host, portS = target, "443"
 	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	port, _ := strconv.Atoi(portS)
 
 	if port != p.cfg.httpsPort() { // not HTTPS: plain tunnel
@@ -331,7 +610,7 @@ func (p *proxy) handleConnect(c net.Conn, br *bufio.Reader, target string) {
 			return
 		}
 		io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n")
-		log.Printf("TUNNEL %s via %s", target, ip)
+		p.debugf("TUNNEL %s via %s", target, ip)
 		relay(c, br, up)
 		return
 	}
@@ -375,12 +654,12 @@ func (p *proxy) forwardHTTP(c net.Conn, br *bufio.Reader, req *http.Request, hos
 		up.Close()
 		return
 	}
-	if err := writePieces(up, splitHTTPRequest(buf.Bytes(), host), p.cfg.delay); err != nil {
+	if err := writePieces(up, splitHTTPRequest(buf.Bytes(), host), p.delay()); err != nil {
 		c.Close()
 		up.Close()
 		return
 	}
-	log.Printf("HTTP  %s via %s", host, ip)
+	p.debugf("HTTP  %s via %s", host, ip)
 	relay(c, br, up)
 }
 
@@ -404,7 +683,8 @@ func (p *proxy) handleLocal(c net.Conn, req *http.Request) {
 	defer c.Close()
 	switch req.URL.Path {
 	case "/proxy.pac":
-		writeResponse(c, "application/x-ns-proxy-autoconfig", []byte(makePAC(p.cfg.names, p.cfg.port)))
+		all := req.URL.Query().Get("all") == "1"
+		writeResponse(c, "application/x-ns-proxy-autoconfig", []byte(makePAC(p.cfg.names, p.cfg.port, all)))
 	case statusPath:
 		b, _ := json.Marshal(p.status())
 		writeResponse(c, "application/json", b)
@@ -430,10 +710,16 @@ type statusInfo struct {
 	Connections   int64    `json:"connections"`
 	Failures      int64    `json:"failures"`
 	Retries       int64    `json:"retries"`
+	ViaUpstream   int64    `json:"via_upstream"`
 	TopFailures   []string `json:"top_failures,omitempty"`
+	Health        health   `json:"health"`
+	Strategy      int      `json:"strategy"`
+	Upstream      string   `json:"upstream,omitempty"`
+	Learned       []string `json:"learned,omitempty"`
 }
 
 func (p *proxy) status() statusInfo {
+	learned := p.state.learnedNames()
 	return statusInfo{
 		PID:           os.Getpid(),
 		SupervisorPID: p.supervisorPID,
@@ -446,7 +732,12 @@ func (p *proxy) status() statusInfo {
 		Connections:   p.stats.conns.Load(),
 		Failures:      p.stats.fails.Load(),
 		Retries:       p.stats.retries.Load(),
+		ViaUpstream:   p.stats.viaUpstream.Load(),
 		TopFailures:   p.stats.top(5),
+		Health:        *p.health.Load(),
+		Strategy:      p.strat.Load().Version,
+		Upstream:      redactURL(p.cfg.upstream),
+		Learned:       learned[:min(50, len(learned))],
 	}
 }
 
@@ -466,7 +757,12 @@ func (p *proxy) handleTransparentTLS(c net.Conn) {
 		c.Close()
 		return
 	}
-	p.forwardTLS(c, c, string(hello[off:off+n]), p.cfg.httpsPort(), hello)
+	host := strings.ToLower(string(hello[off : off+n]))
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		c.Close()
+		return
+	}
+	p.forwardTLS(c, c, host, p.cfg.httpsPort(), hello)
 }
 
 func (p *proxy) handleTransparentHTTP(c net.Conn) {
@@ -493,8 +789,20 @@ func (p *proxy) handleTransparentHTTP(c net.Conn) {
 // ---------------------------------------------------------------- PAC
 
 // makePAC routes the given names through the proxy. Entries starting with "."
-// match the domain and all its subdomains.
-func makePAC(names []string, port int) string {
+// match the domain and all its subdomains. With all set (browser mode) every
+// public host goes through the proxy, which only splits where it has to; the
+// "; DIRECT" fallback keeps browsing working if snisplit is not running.
+func makePAC(names []string, port int, all bool) string {
+	if all {
+		return fmt.Sprintf(`function FindProxyForURL(url, host) {
+  host = host.toLowerCase();
+  if (isPlainHostName(host) || host == "localhost" || dnsDomainIs(host, ".local") ||
+      dnsDomainIs(host, ".localhost") || /^[0-9.]+$/.test(host) || host.indexOf(":") >= 0)
+    return "DIRECT";
+  return "PROXY 127.0.0.1:%d; DIRECT";
+}
+`, port)
+	}
 	var conds []string
 	for _, n := range names {
 		if strings.HasPrefix(n, ".") {

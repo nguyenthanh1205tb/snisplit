@@ -2,33 +2,46 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-// dohEndpoints are DNS-over-HTTPS JSON APIs addressed by IP, so resolving them
-// needs no DNS and they cannot be poisoned by the ISP or by our own hosts file.
-var dohEndpoints = []string{
-	"https://8.8.8.8/resolve?type=A&name=",
-	"https://1.1.1.1/dns-query?type=A&name=",
+// defaultDoH are DNS-over-HTTPS (RFC 8484) servers addressed by IP, so using
+// them needs no DNS and sends no server name for an ISP to filter. They belong
+// to different companies, so blocking one or two changes nothing.
+var defaultDoH = []string{
+	"https://8.8.8.8/dns-query",         // Google
+	"https://1.1.1.1/dns-query",         // Cloudflare
+	"https://8.8.4.4/dns-query",         // Google
+	"https://1.0.0.1/dns-query",         // Cloudflare
+	"https://94.140.14.14/dns-query",    // AdGuard
+	"https://208.67.222.222/dns-query",  // OpenDNS
+	"https://185.222.222.222/dns-query", // DNS.SB
+	"https://9.9.9.9/dns-query",         // Quad9
 }
 
-// resolver looks hosts up over DoH (with a cache), falling back to the system
-// resolver. Loopback answers are discarded: ISP DNS answers 127.0.0.1 for
-// blocked sites, and our hosts file does the same on purpose.
+// resolver looks hosts up over DoH (with a cache), then the system resolver,
+// then the last answer that ever worked. Loopback answers are discarded: ISP
+// DNS answers 127.0.0.1 for blocked sites, and our hosts file does the same.
 type resolver struct {
 	useDoH   bool
 	client   *http.Client
-	mu       sync.Mutex
-	cache    map[string]cacheEntry
+	state    *state                     // last good answers; may be nil
 	override func(host string) []net.IP // tests only
+
+	mu        sync.Mutex
+	endpoints []string
+	fails     map[string]int // consecutive failures per endpoint
+	cache     map[string]cacheEntry
 }
 
 type cacheEntry struct {
@@ -41,12 +54,44 @@ func newResolver(useDoH bool) *resolver {
 		Proxy:               nil, // never send DNS queries through a proxy
 		TLSHandshakeTimeout: 5 * time.Second,
 		ForceAttemptHTTP2:   true,
-		MaxIdleConnsPerHost: 4,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     90 * time.Second,
 	}
 	return &resolver{
-		useDoH: useDoH,
-		client: &http.Client{Timeout: 6 * time.Second, Transport: tr},
-		cache:  map[string]cacheEntry{},
+		useDoH:    useDoH,
+		client:    &http.Client{Timeout: 6 * time.Second, Transport: tr},
+		endpoints: defaultDoH,
+		fails:     map[string]int{},
+		cache:     map[string]cacheEntry{},
+	}
+}
+
+// setEndpoints replaces the DoH servers (from the strategy file).
+func (r *resolver) setEndpoints(eps []string) {
+	if len(eps) == 0 {
+		return
+	}
+	r.mu.Lock()
+	r.endpoints = eps
+	r.mu.Unlock()
+}
+
+// ordered returns the endpoints, the ones failing least first.
+func (r *resolver) ordered() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	eps := append([]string(nil), r.endpoints...)
+	sort.SliceStable(eps, func(i, j int) bool { return r.fails[eps[i]] < r.fails[eps[j]] })
+	return eps
+}
+
+func (r *resolver) mark(ep string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ok {
+		delete(r.fails, ep)
+	} else {
+		r.fails[ep]++
 	}
 }
 
@@ -70,82 +115,201 @@ func (r *resolver) lookup(ctx context.Context, host string) ([]net.IP, error) {
 
 	var dohErr error
 	if r.useDoH {
-		for _, ep := range dohEndpoints {
-			ips, ttl, err := r.doh(ctx, ep+url.QueryEscape(host))
-			if err != nil {
-				dohErr = err
-				continue
-			}
-			if ips = usable(ips); len(ips) > 0 {
-				ttl = min(max(ttl, 30), 3600)
-				r.mu.Lock()
-				r.cache[host] = cacheEntry{ips, time.Now().Add(time.Duration(ttl) * time.Second)}
-				r.mu.Unlock()
-				return ips, nil
-			}
+		ips, ttl, err := r.dohAny(ctx, host)
+		if err == nil {
+			r.remember(host, ips, ttl)
+			return ips, nil
 		}
+		if errors.Is(err, errNXDomain) {
+			return nil, fmt.Errorf("%s: no such host", host)
+		}
+		dohErr = err
 	}
 
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		if dohErr != nil {
-			return nil, fmt.Errorf("DoH: %v; system DNS: %v", dohErr, err)
-		}
-		return nil, err
-	}
 	var ips []net.IP
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	for _, a := range addrs {
 		ips = append(ips, a.IP)
 	}
-	if ips = usable(ips); len(ips) == 0 {
-		return nil, fmt.Errorf("DNS for %s returned only loopback addresses (ISP DNS block or hosts file) and DoH failed: %v", host, dohErr)
+	if ips = usable(ips); len(ips) > 0 {
+		if !r.useDoH { // with DoH failing, system DNS may be the ISP's: do not remember it
+			r.remember(host, ips, 300)
+		}
+		return ips, nil
 	}
-	return ips, nil
+	if r.state != nil {
+		if ips := r.state.lastDNS(host); len(ips) > 0 {
+			return ips, nil
+		}
+	}
+	switch {
+	case err != nil && dohErr != nil:
+		return nil, fmt.Errorf("DoH: %v; system DNS: %v", dohErr, err)
+	case err != nil:
+		return nil, err
+	}
+	return nil, fmt.Errorf("DNS for %s returned only loopback addresses (ISP DNS block or hosts file) and DoH failed: %v", host, dohErr)
 }
 
-func (r *resolver) doh(ctx context.Context, u string) ([]net.IP, int, error) {
+func (r *resolver) remember(host string, ips []net.IP, ttl int) {
+	ttl = min(max(ttl, 30), 3600)
+	r.mu.Lock()
+	r.cache[host] = cacheEntry{ips, time.Now().Add(time.Duration(ttl) * time.Second)}
+	r.mu.Unlock()
+	if r.state != nil {
+		r.state.saveDNS(host, ips)
+	}
+}
+
+var errNXDomain = errors.New("no such host")
+
+// dohAny asks the endpoints two at a time, healthiest first, and returns the
+// first usable answer.
+func (r *resolver) dohAny(ctx context.Context, host string) ([]net.IP, int, error) {
+	type result struct {
+		ep  string
+		ips []net.IP
+		ttl int
+		err error
+	}
+	eps := r.ordered()
+	var lastErr error
+	for i := 0; i < len(eps); i += 2 {
+		batch := eps[i:min(i+2, len(eps))]
+		bctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		ch := make(chan result, len(batch))
+		for _, ep := range batch {
+			go func(ep string) {
+				ips, ttl, err := r.doh(bctx, ep, host)
+				ch <- result{ep, ips, ttl, err}
+			}(ep)
+		}
+		var found *result
+		for range batch {
+			res := <-ch
+			if found != nil { // the slower one was cancelled: not its fault
+				continue
+			}
+			r.mark(res.ep, res.err == nil || errors.Is(res.err, errNXDomain))
+			if res.err != nil {
+				lastErr = res.err
+				continue
+			}
+			if res.ips = usable(res.ips); len(res.ips) > 0 {
+				found = &res
+				cancel()
+			}
+		}
+		cancel()
+		if found != nil {
+			return found.ips, found.ttl, nil
+		}
+		if errors.Is(lastErr, errNXDomain) {
+			return nil, 0, errNXDomain
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no usable address")
+	}
+	return nil, 0, lastErr
+}
+
+// doh sends one RFC 8484 GET query for host's A records.
+func (r *resolver) doh(ctx context.Context, endpoint, host string) ([]net.IP, int, error) {
+	u := endpoint + "?dns=" + base64.RawURLEncoding.EncodeToString(dnsQuery(host))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Accept", "application/dns-json")
+	req.Header.Set("Accept", "application/dns-message")
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("DoH HTTP %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("DoH %s: HTTP %d", endpoint, resp.StatusCode)
 	}
-	var body struct {
-		Answer []struct {
-			Type int    `json:"type"`
-			TTL  int    `json:"TTL"`
-			Data string `json:"data"`
-		} `json:"Answer"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+	msg, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
 		return nil, 0, err
 	}
-	ttl := 300
-	var ips []net.IP
-	for _, a := range body.Answer {
-		if a.Type != 1 {
-			continue
+	return parseDNSAnswer(msg)
+}
+
+// dnsQuery builds a DNS query (ID 0, recursion desired) for host's A records.
+func dnsQuery(host string) []byte {
+	b := []byte{0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if len(label) > 63 {
+			label = label[:63]
 		}
-		if ip := net.ParseIP(a.Data); ip != nil {
-			ips = append(ips, ip)
-			ttl = min(ttl, a.TTL)
+		b = append(b, byte(len(label)))
+		b = append(b, label...)
+	}
+	return append(b, 0, 0, 1, 0, 1) // root, QTYPE A, QCLASS IN
+}
+
+// parseDNSAnswer returns the A records of a DNS response and their lowest TTL.
+func parseDNSAnswer(msg []byte) (ips []net.IP, ttl int, err error) {
+	defer func() {
+		if recover() != nil {
+			ips, ttl, err = nil, 0, errors.New("malformed DNS response")
 		}
+	}()
+	if len(msg) < 12 {
+		return nil, 0, errors.New("short DNS response")
+	}
+	switch msg[3] & 0x0f {
+	case 0:
+	case 3:
+		return nil, 0, errNXDomain
+	default:
+		return nil, 0, fmt.Errorf("DNS error code %d", msg[3]&0x0f)
+	}
+	qd := int(binary.BigEndian.Uint16(msg[4:]))
+	an := int(binary.BigEndian.Uint16(msg[6:]))
+	p := 12
+	for i := 0; i < qd; i++ {
+		p = skipDNSName(msg, p) + 4
+	}
+	ttl = 3600
+	for i := 0; i < an; i++ {
+		p = skipDNSName(msg, p)
+		typ := binary.BigEndian.Uint16(msg[p:])
+		t := int(binary.BigEndian.Uint32(msg[p+4:]))
+		l := int(binary.BigEndian.Uint16(msg[p+8:]))
+		p += 10
+		if typ == 1 && l == 4 {
+			ips = append(ips, net.IPv4(msg[p], msg[p+1], msg[p+2], msg[p+3]))
+			ttl = min(ttl, t)
+		}
+		p += l
 	}
 	return ips, ttl, nil
+}
+
+func skipDNSName(msg []byte, p int) int {
+	for {
+		l := int(msg[p])
+		switch {
+		case l == 0:
+			return p + 1
+		case l&0xc0 == 0xc0: // compression pointer ends the name
+			return p + 2
+		}
+		p += 1 + l
+	}
 }
 
 // usable drops loopback/unspecified addresses and puts IPv4 first.
 func usable(ips []net.IP) []net.IP {
 	var v4, v6 []net.IP
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsUnspecified() {
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
 			continue
 		}
 		if ip.To4() != nil {

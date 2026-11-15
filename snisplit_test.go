@@ -55,7 +55,7 @@ func TestFindSNI(t *testing.T) {
 func TestFragmentModes(t *testing.T) {
 	const name = "store.fastly.steamstatic.com"
 	rec := clientHello(t, name)
-	for _, mode := range fragModes {
+	for _, mode := range []string{"both", "record", "tcp", "none"} {
 		pieces := fragment(rec, mode)
 		joined := bytes.Join(pieces, nil)
 		for _, p := range pieces {
@@ -187,10 +187,16 @@ func TestSplitHTTPRequest(t *testing.T) {
 }
 
 func TestPAC(t *testing.T) {
-	pac := makePAC([]string{"a.example", ".b.example"}, 8881)
+	pac := makePAC([]string{"a.example", ".b.example"}, 8881, false)
 	for _, s := range []string{`host == "a.example"`, `dnsDomainIs(host, ".b.example")`, "PROXY 127.0.0.1:8881"} {
 		if !strings.Contains(pac, s) {
 			t.Errorf("PAC missing %q", s)
+		}
+	}
+	all := makePAC(nil, 8881, true) // browser mode: everything public, with a DIRECT fallback
+	for _, s := range []string{`"PROXY 127.0.0.1:8881; DIRECT"`, "isPlainHostName(host)", `dnsDomainIs(host, ".local")`} {
+		if !strings.Contains(all, s) {
+			t.Errorf("browser PAC missing %q", s)
 		}
 	}
 }
@@ -213,9 +219,10 @@ func testProxy(t *testing.T) (*proxy, *x509.CertPool, string) {
 		}
 		return nil
 	}
-	cfg := config{listen: "127.0.0.1", mode: "both", delay: time.Millisecond, timeout: 5 * time.Second, tlsPort: port}
+	cfg := config{listen: "127.0.0.1", mode: "both", delay: time.Millisecond, delaySet: true,
+		timeout: 5 * time.Second, tlsPort: port, names: []string{"example.com"}}
 	pool := ts.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
-	return newProxy(cfg, res), pool, portS
+	return newProxy(cfg, res, nil), pool, portS
 }
 
 func TestConnectProxyEndToEnd(t *testing.T) {
@@ -332,11 +339,12 @@ func TestAutoModeFallback(t *testing.T) {
 	if r := p.stats.retries.Load(); r != 2 {
 		t.Errorf("retries = %d, want 2", r)
 	}
-	if m, _ := p.modes.Load("example.com"); m != autoModes[2] {
-		t.Errorf("remembered mode = %v, want %s", m, autoModes[2])
+	third := p.strat.Load().Modes[2]
+	if r, _ := p.state.route("example.com"); r.Mode != third || r.IP != "127.0.0.1" {
+		t.Errorf("remembered route = %+v, want %s via 127.0.0.1", r, third)
 	}
-	if got := p.modesFor("example.com")[0]; got != autoModes[2] {
-		t.Errorf("next attempt starts with %s, want %s", got, autoModes[2])
+	if got := p.modesFor("example.com", true)[0]; got != third {
+		t.Errorf("next attempt starts with %s, want %s", got, third)
 	}
 	if st := p.status(); st.Connections != 1 || st.Failures != 0 {
 		t.Errorf("status = %+v", st)

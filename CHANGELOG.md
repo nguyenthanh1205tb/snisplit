@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.4 (2026-11-16)
+
+- Dependency updates: `golang.org/x/sys` v0.50.0 (building from source now needs
+  Go 1.26 or newer), and the GitHub Actions used to build and attest releases
+  (`checkout` v7, `setup-go` v7, `attest-build-provenance` v4)
+
 ## v0.8.3 (2026-11-16)
 
 - Every release file now comes with a build provenance attestation from GitHub:

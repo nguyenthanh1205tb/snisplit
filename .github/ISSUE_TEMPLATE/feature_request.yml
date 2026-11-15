@@ -1,0 +1,10 @@
+name: Đề xuất / Feature request
+description: Ý tưởng cho snisplit
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Bạn muốn snisplit làm được gì? / What would you like?
+    validations:
+      required: true

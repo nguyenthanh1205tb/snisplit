@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Hỏi đáp / Questions
+    url: https://github.com/nguyenthanh1205tb/snisplit/discussions
+    about: Hỏi cách dùng, chia sẻ kinh nghiệm
+  - name: Lỗi bảo mật / Security vulnerability
+    url: https://github.com/nguyenthanh1205tb/snisplit/security/advisories/new
+    about: Báo riêng, không đăng công khai

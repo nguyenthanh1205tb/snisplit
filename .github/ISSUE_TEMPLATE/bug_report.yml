@@ -1,0 +1,36 @@
+name: Báo lỗi / Bug report
+description: snisplit không chạy như mong đợi
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cảm ơn bạn đã báo lỗi! Thanks for the report.
+        Lỗi bảo mật xin báo riêng qua https://github.com/nguyenthanh1205tb/snisplit/security/advisories/new
+  - type: textarea
+    id: what
+    attributes:
+      label: Chuyện gì xảy ra? / What happened?
+      description: Bạn làm gì, mong đợi gì, và thấy gì.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Kết quả của `snisplit doctor`
+      description: Mở PowerShell / Terminal, chạy `snisplit doctor` và dán toàn bộ kết quả vào đây.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: isp
+    attributes:
+      label: Nhà mạng / ISP
+      placeholder: FPT, Viettel, VNPT...
+  - type: dropdown
+    id: os
+    attributes:
+      label: Hệ điều hành / OS
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true

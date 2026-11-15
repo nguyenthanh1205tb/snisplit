@@ -291,6 +291,20 @@ kbd {
 .feature p { margin: 0; color: var(--muted); font-size: 15px; }
 .feature code { font: 13px var(--mono); color: var(--chip-fg); background: var(--chip-bg); border: 1px solid var(--chip-border); padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
 
+/* ---------- trust ---------- */
+.trust-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+ul.ticks { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 9px; }
+ul.ticks li { position: relative; padding-left: 24px; color: var(--muted); font-size: 15px; }
+ul.ticks li::before {
+  content: ""; position: absolute; left: 2px; top: 7px; width: 11px; height: 6px;
+  border-left: 2px solid var(--green); border-bottom: 2px solid var(--green); transform: rotate(-45deg);
+}
+ul.ticks b { color: var(--text); font-weight: 600; }
+ul.ticks a, .trust-more a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+ul.ticks code, .foot-note code { font: 12.5px var(--mono); color: var(--chip-fg); background: var(--chip-bg); border: 1px solid var(--chip-border); padding: 1px 5px; border-radius: 6px; white-space: normal; word-break: break-all; }
+.foot-note { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+.trust-more { text-align: center; color: var(--muted); font-size: 14.5px; max-width: 760px; margin: 22px auto 0; }
+
 /* ---------- compare ---------- */
 .compare-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 620px; font-size: 15px; }
@@ -385,6 +399,7 @@ footer { padding: 40px 0 48px; color: var(--dim); font-size: 14.5px; }
   .hero { grid-template-columns: 1fr; gap: 44px; padding-top: 48px; }
   .term { transform: none; }
   .features { grid-template-columns: repeat(2, 1fr); }
+  .trust-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
   .nav-links a:not(.btn) { display: none; }
@@ -422,6 +437,7 @@ footer { padding: 40px 0 48px; color: var(--dim); font-size: 14.5px; }
       <a href="#cai-dat">Cài đặt</a>
       <a href="#cach-hoat-dong">Cách hoạt động</a>
       <a href="#tinh-nang">Tính năng</a>
+      <a href="#minh-bach">An toàn</a>
       <a href="#hoi-dap">Hỏi đáp</a>
       <button class="btn btn-sm theme-btn" id="theme" type="button" aria-label="Chuyển giao diện sáng / tối" title="Chuyển giao diện sáng / tối">
         <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
@@ -597,6 +613,51 @@ footer { padding: 40px 0 48px; color: var(--dim); font-size: 14.5px; }
         <p>Mã nguồn mở, build tự động trên GitHub, kiểm tra checksum khi cài. Không driver, không đọc dữ liệu của bạn.</p>
       </div>
     </div>
+  </section>
+
+  <!-- TRUST -->
+  <section id="minh-bach" aria-labelledby="h-trust">
+    <div class="head center">
+      <p class="eyebrow">An toàn &amp; minh bạch</p>
+      <h2 id="h-trust">Bạn biết chính xác nó làm gì</h2>
+      <p class="sub">snisplit chỉ chia nhỏ phần mở đầu chưa mã hoá của kết nối. Nó không giải mã HTTPS, không đọc được trang web, mật khẩu hay cookie, và không gửi dữ liệu nào về đâu.</p>
+    </div>
+    <div class="trust-grid">
+      <div class="card feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+        <h3>Thay đổi gì trên máy bạn</h3>
+        <ul class="ticks">
+          <li>Vài dòng trong file <b>hosts</b> trỏ tên miền Steam về máy bạn (có bản sao lưu)</li>
+          <li>Một mục <b>khởi động cùng Windows</b> (xem trong Task Manager)</li>
+          <li>Chương trình trong <code>%LOCALAPPDATA%\Programs\snisplit</code></li>
+          <li>Chỉ nghe ở <code>127.0.0.1</code>: không máy nào khác truy cập được</li>
+        </ul>
+        <p class="foot-note"><code>snisplit uninstall</code> trả lại mọi thứ như cũ.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
+        <h3>Kết nối tới đâu</h3>
+        <ul class="ticks">
+          <li>Trang bạn mở: <b>đi thẳng</b>, không qua máy chủ trung gian</li>
+          <li>Máy chủ DNS-over-HTTPS (Google, Cloudflare...) để tìm địa chỉ trang bị chặn</li>
+          <li>GitHub, mỗi ngày một lần: danh sách tên miền và cách vượt chặn mới</li>
+          <li>Chỉ kiểm tra bản cập nhật khi <b>bạn bấm</b></li>
+        </ul>
+        <p class="foot-note">Không thu thập, không thống kê, không quảng cáo.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></div>
+        <h3>Tự kiểm chứng được</h3>
+        <ul class="ticks">
+          <li>Mã nguồn mở, ai cũng đọc được trên <a href="https://github.com/nguyenthanh1205tb/snisplit" rel="noopener">GitHub</a></li>
+          <li>Mỗi bản phát hành do <b>GitHub Actions</b> build và ký chứng nhận nguồn gốc, không build trên máy cá nhân</li>
+          <li>Trình cài kiểm tra mã SHA-256 trước khi cài</li>
+          <li>Quét lỗ hổng tự động bằng <a href="https://github.com/nguyenthanh1205tb/snisplit/actions/workflows/codeql.yml" rel="noopener">CodeQL</a> và <a href="https://scorecard.dev/viewer/?uri=github.com/nguyenthanh1205tb/snisplit" rel="noopener">OpenSSF Scorecard</a></li>
+        </ul>
+        <p class="foot-note">Kiểm tra một file đã tải: <code>gh attestation verify snisplit_windows_amd64.exe --repo nguyenthanh1205tb/snisplit</code></p>
+      </div>
+    </div>
+    <p class="trust-more">Muốn xem trước khi chạy? Đọc <a href="https://github.com/nguyenthanh1205tb/snisplit/blob/main/install.ps1" rel="noopener">script cài đặt</a> hoặc tải file từ <a href="https://github.com/nguyenthanh1205tb/snisplit/releases/latest" rel="noopener">trang phát hành</a>. Phần mềm chưa được ký số nên Windows có thể cảnh báo với file mới, ít người tải. Báo lỗi bảo mật: <a href="https://github.com/nguyenthanh1205tb/snisplit/security/advisories/new" rel="noopener">tại đây</a>.</p>
   </section>
 
   <!-- COMPARE -->

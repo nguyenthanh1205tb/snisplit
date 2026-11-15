@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # build provenance attestations
+  attestations: write
 
 jobs:
   release:
@@ -38,11 +40,26 @@ jobs:
               -o "dist/snisplit_${os}_${arch}${ext}" .
           done
           cd dist && sha256sum * > checksums.txt && cat checksums.txt
+      # A signed statement, stored by GitHub, that these exact files were built
+      # from this commit by this workflow. Anyone can check it with
+      # "gh attestation verify <file> --repo nguyenthanh1205tb/snisplit".
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*'
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes \
+          cat > notes.md <<EOF
+          **Install / update (Windows):** \`irm https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.ps1 | iex\`
+          · macOS/Linux: \`brew install nguyenthanh1205tb/tap/snisplit\`
+
+          **Verify a download:** every file was built by [this workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) from commit \`${GITHUB_SHA::7}\`.
+          Check the SHA-256 against \`checksums.txt\`, or the build provenance with
+          \`gh attestation verify snisplit_windows_amd64.exe --repo $GITHUB_REPOSITORY\`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes \
             || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
       - name: Update Scoop manifest
         run: |

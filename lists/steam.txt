@@ -40,6 +40,14 @@ community.cloudflare.steamstatic.com
 avatars.cloudflare.steamstatic.com
 clan.cloudflare.steamstatic.com
 video.cloudflare.steamstatic.com
+store.steamstatic.com
+shared.steamstatic.com
+cdn.steamstatic.com
+community.steamstatic.com
+avatars.steamstatic.com
+clan.steamstatic.com
+video.steamstatic.com
+client-update.steamstatic.com
 steamcdn-a.akamaihd.net
 steamstore-a.akamaihd.net
 steamcommunity-a.akamaihd.net

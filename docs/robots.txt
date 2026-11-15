@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://nguyenthanh1205tb.github.io/snisplit/sitemap.xml

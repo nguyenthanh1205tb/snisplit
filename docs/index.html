@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steam bị chặn? Vào lại không cần VPN | snisplit (FPT, Viettel, VNPT)</title>
+<meta name="description" content="Không vào được Steam trên FPT, Viettel, VNPT? snisplit giúp vào lại Steam chỉ với 1 lệnh: không VPN, không mất tốc độ. Miễn phí, mã nguồn mở.">
+<meta name="keywords" content="steam bị chặn, không vào được steam, vào steam không cần vpn, fpt chặn steam, viettel chặn steam, vnpt chặn steam, steam community bị chặn, goodbyedpi, snisplit">
+<link rel="canonical" href="https://nguyenthanh1205tb.github.io/snisplit/">
+<link rel="icon" type="image/png" href="logo.png">
+<meta name="theme-color" content="#2563eb">
+
+<meta property="og:type" content="website">
+<meta property="og:locale" content="vi_VN">
+<meta property="og:site_name" content="snisplit">
+<meta property="og:title" content="Steam bị chặn? Vào lại chỉ với 1 lệnh, không cần VPN">
+<meta property="og:description" content="Vào lại Steam trên FPT, Viettel, VNPT. Không VPN, không driver, không mất tốc độ. Miễn phí, mã nguồn mở.">
+<meta property="og:url" content="https://nguyenthanh1205tb.github.io/snisplit/">
+<meta property="og:image" content="https://nguyenthanh1205tb.github.io/snisplit/social.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "snisplit",
+  "description": "Vào lại Steam và các trang bị nhà mạng chặn theo tên miền (SNI) mà không cần VPN. Thay thế GoodbyeDPI.",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "VND" },
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://nguyenthanh1205tb.github.io/snisplit/",
+  "downloadUrl": "https://github.com/nguyenthanh1205tb/snisplit/releases/latest",
+  "codeRepository": "https://github.com/nguyenthanh1205tb/snisplit",
+  "inLanguage": ["vi", "en"]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Vì sao không vào được Steam?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Nhà mạng đọc tên trang web (SNI) trong lúc trình duyệt bắt đầu kết nối HTTPS và cắt kết nối nếu đó là Steam. snisplit chia nhỏ phần đó để tên trang không bao giờ nằm trọn trong một gói tin, nên nhà mạng không nhận ra." } },
+    { "@type": "Question", "name": "snisplit có làm chậm mạng hay tải game không?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Không. Dữ liệu đi thẳng tới máy chủ Steam, không qua máy chủ trung gian như VPN, nên tốc độ tải game giữ nguyên." } },
+    { "@type": "Question", "name": "snisplit có an toàn không?",
+      "acceptedAnswer": { "@type": "Answer", "text": "snisplit là mã nguồn mở, được build tự động trên GitHub Actions, trình cài kiểm tra SHA-256 trước khi cài. Nó không cài driver, không đọc nội dung kết nối của bạn và chạy hoàn toàn trên máy bạn." } },
+    { "@type": "Question", "name": "snisplit khác gì VPN và GoodbyeDPI?",
+      "acceptedAnswer": { "@type": "Answer", "text": "VPN đưa toàn bộ dữ liệu qua máy chủ khác nên chậm hơn và thường tốn phí. GoodbyeDPI cần cài driver WinDivert. snisplit không cần cả hai, có biểu tượng khay, tự cập nhật và tự đổi cách vượt chặn khi nhà mạng thay đổi." } },
+    { "@type": "Question", "name": "Gỡ snisplit thế nào?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Mở PowerShell và chạy: snisplit uninstall. Lệnh này trả mọi thứ về như cũ và xoá chương trình." } }
+  ]
+}
+</script>
+
+<style>
+:root {
+  --bg: #f7f8fb;
+  --surface: #ffffff;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --accent: #2563eb;
+  --accent-2: #0d9488;
+  --code-bg: #0f172a;
+  --code-text: #e2e8f0;
+  --ok: #059669;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1120;
+    --surface: #111a2e;
+    --text: #e5e7eb;
+    --muted: #94a3b8;
+    --border: #1f2a44;
+    --accent: #3b82f6;
+    --accent-2: #2dd4bf;
+    --code-bg: #020617;
+    --code-text: #e2e8f0;
+    --ok: #059669;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+a { color: var(--accent); }
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+
+header.hero { text-align: center; padding: 56px 0 32px; }
+.hero img { width: 96px; height: 96px; }
+.hero h1 {
+  font-size: clamp(28px, 5vw, 44px);
+  line-height: 1.2;
+  margin: 20px 0 12px;
+  letter-spacing: -0.02em;
+}
+.hero h1 span {
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero p.lead { font-size: 19px; color: var(--muted); margin: 0 auto; max-width: 620px; }
+.badges { margin-top: 18px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.badge {
+  font-size: 14px; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+}
+
+section { margin: 36px 0; }
+h2 { font-size: 26px; margin: 0 0 14px; letter-spacing: -0.01em; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+}
+ol.steps { padding-left: 22px; margin: 0; }
+ol.steps li { margin: 10px 0; }
+kbd {
+  font: 14px ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding: 1px 7px; border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 6px; background: var(--bg);
+}
+.cmd {
+  display: flex; align-items: stretch;
+  margin: 12px 0 4px; border-radius: 10px; overflow: hidden;
+  background: var(--code-bg); border: 1px solid var(--border);
+}
+.cmd code {
+  flex: 1; min-width: 0; color: var(--code-text);
+  font: 15px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding: 14px 16px; overflow-x: auto; white-space: nowrap;
+}
+.cmd button {
+  border: 0; cursor: pointer; padding: 0 18px;
+  font: 600 15px/1 "Segoe UI", system-ui, sans-serif;
+  color: #fff; background: var(--accent); white-space: nowrap;
+}
+.cmd button:hover { filter: brightness(1.1); }
+.cmd button.done { background: var(--ok); }
+.note { color: var(--muted); font-size: 15px; margin: 10px 0 0; }
+
+.tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.tabs button {
+  font: 600 15px/1 "Segoe UI", system-ui, sans-serif; cursor: pointer;
+  padding: 9px 16px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--muted);
+}
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.panel[hidden] { display: none; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.feature h3 { margin: 0 0 6px; font-size: 18px; }
+.feature p { margin: 0; color: var(--muted); font-size: 15.5px; }
+.feature code, .faq code {
+  font: 14px ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+}
+
+table.compare { width: 100%; border-collapse: collapse; font-size: 15.5px; }
+.compare th, .compare td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.compare th { color: var(--muted); font-weight: 600; }
+.compare td:first-child { font-weight: 600; }
+.table-scroll { overflow-x: auto; }
+
+.faq details { border-bottom: 1px solid var(--border); padding: 12px 0; }
+.faq details:last-child { border-bottom: 0; }
+.faq summary { cursor: pointer; font-weight: 600; font-size: 17.5px; }
+.faq p { margin: 8px 0 0; color: var(--muted); }
+
+footer { text-align: center; color: var(--muted); font-size: 15px; padding: 32px 0 48px; }
+.cta {
+  display: inline-block; margin-top: 8px; padding: 11px 22px; border-radius: 10px;
+  background: var(--text); color: var(--bg); text-decoration: none; font-weight: 600;
+}
+@media (max-width: 520px) {
+  body { font-size: 16px; }
+  .card { padding: 18px; }
+  .cmd { flex-direction: column; }
+  .cmd button { padding: 12px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <img src="logo.png" alt="Logo snisplit" width="96" height="96">
+  <h1>Steam bị chặn?<br><span>Vào lại chỉ với 1 lệnh.</span></h1>
+  <p class="lead">Không vào được Steam Store, Community hay ảnh đại diện trên mạng FPT, Viettel, VNPT?
+    snisplit giúp bạn vào lại bình thường, <b>không cần VPN</b> và không làm chậm mạng.</p>
+  <div class="badges">
+    <span class="badge">Miễn phí</span>
+    <span class="badge">Mã nguồn mở</span>
+    <span class="badge">Không driver</span>
+    <span class="badge">Windows · macOS · Linux</span>
+  </div>
+</header>
+
+<section id="cai-dat" aria-labelledby="h-install">
+  <h2 id="h-install">Cài đặt</h2>
+  <div class="card">
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" aria-controls="p-win" id="t-win">Windows</button>
+      <button role="tab" aria-selected="false" aria-controls="p-mac" id="t-mac">macOS / Linux</button>
+    </div>
+
+    <div class="panel" id="p-win" role="tabpanel" aria-labelledby="t-win">
+      <ol class="steps">
+        <li>Bấm phím <kbd>Windows</kbd>, gõ <b>PowerShell</b> rồi bấm <kbd>Enter</kbd>.</li>
+        <li>Dán dòng dưới đây vào và bấm <kbd>Enter</kbd>:
+          <div class="cmd"><code id="c-win">irm https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.ps1 | iex</code><button data-copy="c-win">Sao chép</button></div>
+        </li>
+        <li>Nếu Windows hỏi quyền, bấm <b>Yes</b>. Mở lại Steam là xong.</li>
+      </ol>
+      <p class="note">snisplit tự chạy cùng Windows và có biểu tượng cạnh đồng hồ. Chạy lại lệnh trên bất cứ lúc nào để cập nhật.</p>
+    </div>
+
+    <div class="panel" id="p-mac" role="tabpanel" aria-labelledby="t-mac" hidden>
+      <p style="margin-top:0">Cần có <a href="https://brew.sh" rel="noopener">Homebrew</a>. Mở Terminal và chạy lần lượt:</p>
+      <div class="cmd"><code id="c-mac1">brew install nguyenthanh1205tb/tap/snisplit</code><button data-copy="c-mac1">Sao chép</button></div>
+      <div class="cmd"><code id="c-mac2">sudo snisplit hosts install &amp;&amp; brew services start snisplit</code><button data-copy="c-mac2">Sao chép</button></div>
+      <p class="note">Lệnh thứ hai hỏi mật khẩu máy (để sửa file hosts).</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="h-more">
+  <h2 id="h-more">Còn làm được gì?</h2>
+  <div class="grid">
+    <div class="card feature">
+      <h3>Mọi trang bị chặn</h3>
+      <p>Chạy <code>snisplit browser on</code> để vào được cả các trang web khác bị chặn trên trình duyệt. Trang không bị chặn vẫn đi thẳng như bình thường.</p>
+    </div>
+    <div class="card feature">
+      <h3>Chặn quảng cáo</h3>
+      <p>Chạy <code>snisplit adblock on</code> để chặn quảng cáo, theo dõi và trang lừa đảo trên mọi trình duyệt, kể cả quảng cáo trên các trang Việt.</p>
+    </div>
+    <div class="card feature">
+      <h3>Tự lo mọi thứ</h3>
+      <p>Tự khởi động, tự kiểm tra, tự đổi cách vượt chặn khi nhà mạng thay đổi, tự báo khi có vấn đề.</p>
+    </div>
+    <div class="card feature">
+      <h3>Có lỗi?</h3>
+      <p>Chạy <code>snisplit doctor</code>: nó kiểm tra mọi thứ và chỉ bạn cách sửa. Gỡ sạch bằng <code>snisplit uninstall</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="h-compare">
+  <h2 id="h-compare">So với VPN và GoodbyeDPI</h2>
+  <div class="card table-scroll">
+    <table class="compare">
+      <thead><tr><th></th><th>snisplit</th><th>VPN</th><th>GoodbyeDPI</th></tr></thead>
+      <tbody>
+        <tr><td>Tốc độ tải game</td><td>Giữ nguyên</td><td>Chậm hơn</td><td>Giữ nguyên</td></tr>
+        <tr><td>Chi phí</td><td>Miễn phí</td><td>Thường tốn phí</td><td>Miễn phí</td></tr>
+        <tr><td>Cài driver</td><td>Không</td><td>Thường có</td><td>Có (WinDivert)</td></tr>
+        <tr><td>Cài đặt</td><td>1 lệnh</td><td>Tải app, đăng ký</td><td>Tải, giải nén, chạy script</td></tr>
+        <tr><td>Tự cập nhật, tự kiểm tra</td><td>Có</td><td>Tuỳ app</td><td>Không</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="faq" aria-labelledby="h-faq">
+  <h2 id="h-faq">Câu hỏi thường gặp</h2>
+  <div class="card">
+    <details open>
+      <summary>Vì sao không vào được Steam?</summary>
+      <p>Nhà mạng đọc tên trang web (SNI) trong lúc trình duyệt bắt đầu kết nối HTTPS và cắt kết nối nếu đó là Steam. snisplit chia nhỏ phần đó để tên trang không bao giờ nằm trọn trong một gói tin, nên nhà mạng không nhận ra.</p>
+    </details>
+    <details>
+      <summary>Có làm chậm mạng hay tải game không?</summary>
+      <p>Không. Dữ liệu đi thẳng tới máy chủ Steam, không qua máy chủ trung gian như VPN, nên tốc độ tải game giữ nguyên.</p>
+    </details>
+    <details>
+      <summary>Có an toàn không?</summary>
+      <p>snisplit là mã nguồn mở, được build tự động trên GitHub Actions, và trình cài kiểm tra SHA-256 trước khi cài. Nó không cài driver, không đọc nội dung kết nối của bạn và chạy hoàn toàn trên máy bạn. Mã nguồn ở <a href="https://github.com/nguyenthanh1205tb/snisplit">GitHub</a>.</p>
+    </details>
+    <details>
+      <summary>Có ảnh hưởng tới game online, LMHT, Valorant không?</summary>
+      <p>Không. snisplit không cài driver nên không đụng tới phần chống gian lận như Vanguard, và chỉ xử lý kết nối tới các trang bị chặn.</p>
+    </details>
+    <details>
+      <summary>Gỡ thế nào?</summary>
+      <p>Mở PowerShell và chạy <code>snisplit uninstall</code>. Mọi thứ trở về như cũ.</p>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <a class="cta" href="https://github.com/nguyenthanh1205tb/snisplit">Xem trên GitHub</a>
+  <p>snisplit · Giấy phép MIT · <a href="https://github.com/nguyenthanh1205tb/snisplit/issues">Báo lỗi</a> · <a href="https://github.com/nguyenthanh1205tb/snisplit/discussions">Hỏi đáp</a></p>
+</footer>
+
+</div>
+<script>
+document.querySelectorAll('[data-copy]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var text = document.getElementById(b.dataset.copy).textContent;
+    var done = function () {
+      b.textContent = 'Đã chép'; b.classList.add('done');
+      setTimeout(function () { b.textContent = 'Sao chép'; b.classList.remove('done'); }, 2000);
+    };
+    if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, function () {}); }
+  });
+});
+var tabs = document.querySelectorAll('[role="tab"]');
+tabs.forEach(function (t) {
+  t.addEventListener('click', function () {
+    tabs.forEach(function (o) {
+      var on = o === t;
+      o.setAttribute('aria-selected', on);
+      document.getElementById(o.getAttribute('aria-controls')).hidden = !on;
+    });
+  });
+});
+if (/Mac|Linux/.test(navigator.platform) && !/Android/.test(navigator.userAgent)) { document.getElementById('t-mac').click(); }
+</script>
+</body>
+</html>

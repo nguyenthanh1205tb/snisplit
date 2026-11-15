@@ -2,6 +2,32 @@
 
 <h1 align="center">snisplit</h1>
 
+<p align="center"><b>Steam bị chặn? Vào lại chỉ với 1 lệnh. Không VPN, không mất tốc độ.</b><br>
+<a href="https://nguyenthanh1205tb.github.io/snisplit/">Trang hướng dẫn tiếng Việt</a> · <a href="#install">English</a></p>
+
+## Tiếng Việt
+
+Không vào được Steam (Store, Community, ảnh đại diện, trang game) trên mạng FPT, Viettel, VNPT?
+snisplit giúp bạn vào lại bình thường mà **không cần VPN**, không cài driver, không làm chậm mạng
+và không làm ảnh hưởng tới tốc độ tải game. Miễn phí, mã nguồn mở. Đây cũng là một lựa chọn thay
+cho GoodbyeDPI.
+
+**Cài trên Windows:** bấm phím Windows, gõ `PowerShell`, Enter, rồi dán dòng này và Enter:
+
+```powershell
+irm https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.ps1 | iex
+```
+
+Nếu Windows hỏi quyền thì bấm **Yes**. Xong: snisplit tự chạy cùng Windows, có biểu tượng cạnh
+đồng hồ. Mở lại Steam là vào được.
+
+- `snisplit browser on`: vào được cả các trang web khác bị chặn trên trình duyệt
+- `snisplit adblock on`: chặn quảng cáo và theo dõi trên trình duyệt
+- `snisplit doctor`: kiểm tra lỗi và chỉ cách sửa
+- `snisplit uninstall`: gỡ sạch
+
+---
+
 Gets around ISP blocking of sites like Steam (e.g. in Vietnam). No VPN, no driver,
 full speed.
 

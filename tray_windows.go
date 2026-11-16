@@ -141,6 +141,15 @@ func (t *tray) watchReady() {
 	os.Exit(3)
 }
 
+// openURL opens a web page in the default browser.
+func openURL(u string) {
+	exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
+}
+
+func sharePageURL() string {
+	return "http://127.0.0.1:" + strconv.Itoa(defaultPort) + phonePath
+}
+
 // trayRunning reports whether a tray icon process runs in this session.
 func trayRunning() bool {
 	name, _ := windows.UTF16PtrFromString(trayMutexName)
@@ -283,7 +292,16 @@ func (t *tray) ready() {
 	mLogin := systray.AddMenuItemCheckbox("Start at login", "Start the proxy and this icon when you log in", autostartEnabled())
 	mBrowser := systray.AddMenuItemCheckbox("Browser mode (all sites)",
 		"Send every site in your browsers through snisplit; blocked ones are found and split automatically", loadSettings().Browser)
-	mAds := systray.AddMenuItemCheckbox("Block ads", "Refuse ad, tracker and malware domains (needs browser mode)", loadSettings().Adblock)
+	mAll := systray.AddMenuItemCheckbox("All apps (system DNS)",
+		"Every app, not just browsers: blocked sites open and ads are blocked (asks for administrator rights)", loadSettings().DNS)
+	mAds := systray.AddMenuItemCheckbox("Block ads", "Refuse ad, tracker and malware domains (browser mode or all apps)", loadSettings().Adblock)
+	mShare := systray.AddMenuItemCheckbox("Share with phones (Wi-Fi)",
+		"Phones on the same Wi-Fi can use snisplit (asks for administrator rights once, for the firewall)", loadSettings().Share)
+	mPhone := systray.AddMenuItem("Phone setup (QR code)...", "Open the page that sets a phone up")
+	if !loadSettings().Share {
+		mPhone.Hide()
+	}
+	systray.AddSeparator()
 	mLog := systray.AddMenuItem("Open log", "Open the proxy log file")
 	mDoctor := systray.AddMenuItem("Run diagnostics", "Open a window with the results of 'snisplit doctor'")
 	mList := systray.AddMenuItem("Update site list", "Download the newest site list (asks for administrator rights)")
@@ -424,7 +442,7 @@ func (t *tray) ready() {
 					t.run("adblock", "off")
 				} else {
 					t.run("adblock", "on")
-					if !loadSettings().Browser { // ad blocking needs browser mode
+					if s := loadSettings(); !s.Browser && !s.DNS { // ad blocking needs one of them
 						t.run("browser", "on")
 						mBrowser.Check()
 					}
@@ -434,6 +452,32 @@ func (t *tray) ready() {
 				} else {
 					mAds.Uncheck()
 				}
+			case <-mAll.ClickedCh:
+				if mAll.Checked() {
+					t.run("dns", "off")
+				} else if err := t.run("dns", "on"); err != nil {
+					notify("snisplit", "Could not turn on 'All apps'. Run diagnostics for details.")
+				}
+				if loadSettings().DNS {
+					mAll.Check()
+				} else {
+					mAll.Uncheck()
+				}
+			case <-mShare.ClickedCh:
+				if mShare.Checked() {
+					t.run("share", "off")
+				} else if err := t.run("share", "on"); err == nil {
+					openURL(sharePageURL())
+				}
+				if loadSettings().Share {
+					mShare.Check()
+					mPhone.Show()
+				} else {
+					mShare.Uncheck()
+					mPhone.Hide()
+				}
+			case <-mPhone.ClickedCh:
+				openURL(sharePageURL())
 			case <-mLog.ClickedCh:
 				open := exec.Command("rundll32", "url.dll,FileProtocolHandler", logPath())
 				open.Start()

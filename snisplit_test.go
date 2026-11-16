@@ -187,17 +187,24 @@ func TestSplitHTTPRequest(t *testing.T) {
 }
 
 func TestPAC(t *testing.T) {
-	pac := makePAC([]string{"a.example", ".b.example"}, 8881, false)
-	for _, s := range []string{`host == "a.example"`, `dnsDomainIs(host, ".b.example")`, "PROXY 127.0.0.1:8881"} {
+	pac := makePAC([]string{"a.example", ".b.example"}, 8881, false, "127.0.0.1")
+	for _, s := range []string{`host == "a.example"`, `dnsDomainIs(host, ".b.example")`, `"PROXY 127.0.0.1:8881"`} {
 		if !strings.Contains(pac, s) {
 			t.Errorf("PAC missing %q", s)
 		}
 	}
-	all := makePAC(nil, 8881, true) // browser mode: everything public, with a DIRECT fallback
+	all := makePAC(nil, 8881, true, "127.0.0.1") // browser mode: everything public, with a DIRECT fallback
 	for _, s := range []string{`"PROXY 127.0.0.1:8881; DIRECT"`, "isPlainHostName(host)", `dnsDomainIs(host, ".local")`} {
 		if !strings.Contains(all, s) {
 			t.Errorf("browser PAC missing %q", s)
 		}
+	}
+	// a phone gets this computer's network address, and goes direct when it is off
+	if p := makePAC([]string{"a.example"}, 8881, false, "192.168.1.5"); !strings.Contains(p, `"PROXY 192.168.1.5:8881; DIRECT"`) {
+		t.Errorf("phone PAC:\n%s", p)
+	}
+	if p := makePAC(nil, 8881, true, "192.168.1.5"); !strings.Contains(p, `"PROXY 192.168.1.5:8881; DIRECT"`) {
+		t.Errorf("phone browser PAC:\n%s", p)
 	}
 }
 

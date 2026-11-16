@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,6 +18,9 @@ type settings struct {
 	AdblockList string   `json:"adblock_list,omitempty"` // light, normal, pro or a URL ("" = normal)
 	Allow       []string `json:"allow,omitempty"`        // never blocked
 	Block       []string `json:"block,omitempty"`        // blocked as well as the list
+
+	DNS   bool `json:"dns,omitempty"`   // "snisplit dns on": the computer's DNS points at snisplit
+	Share bool `json:"share,omitempty"` // "snisplit share on": phones on the local network use snisplit
 }
 
 var settingsPath = func() string {
@@ -30,7 +34,7 @@ var settingsPath = func() string {
 func loadSettings() settings {
 	var s settings
 	if b, err := os.ReadFile(settingsPath()); err == nil {
-		json.Unmarshal(b, &s)
+		json.Unmarshal(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), &s) // Notepad / PowerShell may add a BOM
 	}
 	return s
 }

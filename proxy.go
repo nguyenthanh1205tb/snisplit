@@ -40,6 +40,7 @@ type config struct {
 	verbose     bool
 	names       []string // hostnames / .suffixes routed through the proxy (PAC)
 	upstream    *url.URL // last-resort tunnel, nil for none
+	share       bool     // also serve phones and other devices on the local network (port only, not 443/80)
 
 	tlsPort int // upstream HTTPS port; 0 means 443 (tests override it)
 }
@@ -120,6 +121,9 @@ type proxy struct {
 
 	mu        sync.Mutex
 	listeners []net.Listener
+	closers   []io.Closer // DNS sockets
+
+	dns atomic.Pointer[dnsServer] // nil unless "snisplit dns on"
 }
 
 func newProxy(cfg config, res *resolver, st *state) *proxy {
@@ -182,13 +186,22 @@ func (p *proxy) debugf(format string, a ...any) {
 // listenAll opens the HTTP proxy listener and, in transparent mode, the
 // listeners on :443 and :80. Failure to open the transparent ports is a warning.
 func (p *proxy) listenAll() error {
-	ln, err := net.Listen("tcp", net.JoinHostPort(p.cfg.listen, strconv.Itoa(p.cfg.port)))
+	addr, handler := net.JoinHostPort(p.cfg.listen, strconv.Itoa(p.cfg.port)), p.handleProxyConn
+	if p.cfg.share { // every interface, but only this computer and the local network get in
+		addr, handler = ":"+strconv.Itoa(p.cfg.port), lanOnly(p.handleProxyConn)
+	}
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	p.track(ln)
-	go p.serve(ln, p.handleProxyConn)
+	go p.serve(ln, handler)
 	log.Printf("HTTP proxy on %s  (PAC: http://%s/proxy.pac)", ln.Addr(), ln.Addr())
+	if p.cfg.share {
+		if ip := lanIP(); ip != nil {
+			log.Printf("shared with the local network: phones use http://%s/proxy.pac?all=1", net.JoinHostPort(ip.String(), strconv.Itoa(p.cfg.port)))
+		}
+	}
 
 	if p.cfg.transparent {
 		for _, t := range []struct {
@@ -223,6 +236,9 @@ func (p *proxy) close() {
 	defer p.mu.Unlock()
 	for _, l := range p.listeners {
 		l.Close()
+	}
+	for _, c := range p.closers {
+		c.Close()
 	}
 	p.state.save()
 }
@@ -829,15 +845,39 @@ func splitHTTPRequest(raw []byte, host string) [][]byte {
 
 func (p *proxy) handleLocal(c net.Conn, req *http.Request) {
 	defer c.Close()
+	local := isLoopback(c.RemoteAddr())
 	switch req.URL.Path {
 	case "/proxy.pac":
 		all := req.URL.Query().Get("all") == "1"
-		writeResponse(c, "application/x-ns-proxy-autoconfig", []byte(makePAC(p.cfg.names, p.cfg.port, all)))
+		proxyHost := "127.0.0.1"
+		if !local { // a phone: point it at the address it used to reach us
+			if h, _, err := net.SplitHostPort(req.Host); err == nil && net.ParseIP(h) != nil {
+				proxyHost = h
+			} else if ip := lanIP(); ip != nil {
+				proxyHost = ip.String()
+			}
+		}
+		writeResponse(c, "application/x-ns-proxy-autoconfig", []byte(makePAC(p.cfg.names, p.cfg.port, all, proxyHost)))
+	case phonePath:
+		p.servePhonePage(c, local)
+	case phoneQRPath:
+		p.servePhoneQR(c)
 	case statusPath:
+		if !local {
+			io.WriteString(c, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+			return
+		}
 		b, _ := json.Marshal(p.status())
 		writeResponse(c, "application/json", b)
-	case reloadPath: // re-read settings.json (ad blocking) without dropping connections
+	case reloadPath: // re-read settings.json (ad blocking, DNS fallbacks) without dropping connections
+		if !local {
+			io.WriteString(c, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+			return
+		}
 		p.applyAdblock(loadSettings())
+		if d := p.dns.Load(); d != nil {
+			d.setFallback(dnsFallbacks(loadDNSBackup(dnsBackupPath())))
+		}
 		writeResponse(c, "text/plain", []byte("ok\n"))
 	default:
 		io.WriteString(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -850,25 +890,27 @@ func writeResponse(w io.Writer, ctype string, body []byte) {
 }
 
 type statusInfo struct {
-	PID           int      `json:"pid"`
-	SupervisorPID int      `json:"supervisor_pid,omitempty"`
-	Restarts      int      `json:"restarts"`
-	Version       string   `json:"version"`
-	Uptime        string   `json:"uptime"`
-	Mode          string   `json:"mode"`
-	Transparent   bool     `json:"transparent"`
-	Port          int      `json:"port"`
-	Connections   int64    `json:"connections"`
-	Failures      int64    `json:"failures"`
-	Retries       int64    `json:"retries"`
-	ViaUpstream   int64    `json:"via_upstream"`
-	ViaOtherIP    int64    `json:"via_other_address"`
-	TopFailures   []string `json:"top_failures,omitempty"`
-	Health        health   `json:"health"`
-	Strategy      int      `json:"strategy"`
-	Upstream      string   `json:"upstream,omitempty"`
-	Learned       []string `json:"learned,omitempty"`
-	Adblock       *adStats `json:"adblock,omitempty"`
+	PID           int       `json:"pid"`
+	SupervisorPID int       `json:"supervisor_pid,omitempty"`
+	Restarts      int       `json:"restarts"`
+	Version       string    `json:"version"`
+	Uptime        string    `json:"uptime"`
+	Mode          string    `json:"mode"`
+	Transparent   bool      `json:"transparent"`
+	Port          int       `json:"port"`
+	Connections   int64     `json:"connections"`
+	Failures      int64     `json:"failures"`
+	Retries       int64     `json:"retries"`
+	ViaUpstream   int64     `json:"via_upstream"`
+	ViaOtherIP    int64     `json:"via_other_address"`
+	TopFailures   []string  `json:"top_failures,omitempty"`
+	Health        health    `json:"health"`
+	Strategy      int       `json:"strategy"`
+	Upstream      string    `json:"upstream,omitempty"`
+	Learned       []string  `json:"learned,omitempty"`
+	Adblock       *adStats  `json:"adblock,omitempty"`
+	DNS           *dnsStats `json:"dns,omitempty"`   // "snisplit dns on"
+	Share         string    `json:"share,omitempty"` // phones' PAC URL when shared with the local network
 }
 
 type adStats struct {
@@ -887,6 +929,8 @@ func (p *proxy) status() statusInfo {
 	}
 	return statusInfo{
 		Adblock:       ads,
+		DNS:           dnsStatsOf(p.dns.Load()),
+		Share:         p.sharedPAC(),
 		PID:           os.Getpid(),
 		SupervisorPID: p.supervisorPID,
 		Restarts:      p.restarts,
@@ -959,16 +1003,22 @@ func (p *proxy) handleTransparentHTTP(c net.Conn) {
 // match the domain and all its subdomains. With all set (browser mode) every
 // public host goes through the proxy, which only splits where it has to; the
 // "; DIRECT" fallback keeps browsing working if snisplit is not running.
-func makePAC(names []string, port int, all bool) string {
+// proxyHost is the proxy's address as the client sees it: 127.0.0.1 on this
+// computer, the local network address for a phone.
+func makePAC(names []string, port int, all bool, proxyHost string) string {
 	if all {
 		return fmt.Sprintf(`function FindProxyForURL(url, host) {
   host = host.toLowerCase();
   if (isPlainHostName(host) || host == "localhost" || dnsDomainIs(host, ".local") ||
       dnsDomainIs(host, ".localhost") || /^[0-9.]+$/.test(host) || host.indexOf(":") >= 0)
     return "DIRECT";
-  return "PROXY 127.0.0.1:%d; DIRECT";
+  return "PROXY %s; DIRECT";
 }
-`, port)
+`, net.JoinHostPort(proxyHost, strconv.Itoa(port)))
+	}
+	fallback := ""
+	if proxyHost != "127.0.0.1" { // a phone must keep working when this computer is off
+		fallback = "; DIRECT"
 	}
 	var conds []string
 	for _, n := range names {
@@ -983,5 +1033,6 @@ func makePAC(names []string, port int, all bool) string {
 	if len(conds) > 0 {
 		cond = strings.Join(conds, " ||\n      ")
 	}
-	return fmt.Sprintf("function FindProxyForURL(url, host) {\n  host = host.toLowerCase();\n  if (%s)\n    return \"PROXY 127.0.0.1:%d\";\n  return \"DIRECT\";\n}\n", cond, port)
+	return fmt.Sprintf("function FindProxyForURL(url, host) {\n  host = host.toLowerCase();\n  if (%s)\n    return \"PROXY %s%s\";\n  return \"DIRECT\";\n}\n",
+		cond, net.JoinHostPort(proxyHost, strconv.Itoa(port)), fallback)
 }

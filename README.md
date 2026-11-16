@@ -33,7 +33,9 @@ Nhà mạng chặn cả địa chỉ IP? snisplit tự tìm máy chủ khác c�
 nước khác, máy chủ khác cùng CDN) và vẫn đi thẳng tới trang, không qua máy trung gian.
 
 - `snisplit browser on`: vào được cả các trang web khác bị chặn trên trình duyệt
-- `snisplit adblock on`: chặn quảng cáo và theo dõi trên trình duyệt
+- `snisplit dns on`: áp dụng cho **mọi ứng dụng** (Discord, launcher game...), không chỉ trình duyệt
+- `snisplit adblock on`: chặn quảng cáo và theo dõi (trên trình duyệt, hoặc mọi ứng dụng khi bật `dns on`)
+- `snisplit share on`: cho **điện thoại cùng Wi-Fi** dùng chung, quét mã QR là xong
 - `snisplit doctor`: kiểm tra lỗi và chỉ cách sửa
 - `snisplit uninstall`: gỡ sạch
 
@@ -72,10 +74,18 @@ sudo snisplit hosts install && brew services start snisplit
 
 ```sh
 snisplit browser on    # open any blocked website in your browsers
-snisplit adblock on    # block ads and trackers in your browsers
+snisplit dns on        # the same for every app, not just browsers (Windows)
+snisplit adblock on    # block ads and trackers (browsers, or every app with dns on)
+snisplit share on      # phones on the same Wi-Fi use snisplit too: scan the QR code
 ```
 
-Both are also in the tray icon menu (Windows). Use `off` to turn them off.
+All are also in the tray icon menu (Windows). Use `off` to turn them off.
+
+`dns on` points your computer's DNS at snisplit, which looks names up over DNS-over-HTTPS,
+answers ad domains with `0.0.0.0`, and sends sites blocked by name through its own listeners.
+It finds such sites by itself: the first time an app asks for a name, one TLS handshake
+checks whether the ISP cuts it off. If snisplit is not running, Windows falls back to your
+previous DNS server, so the internet keeps working.
 
 ## Something not working?
 
@@ -111,7 +121,9 @@ telemetry or usage data anywhere.
 | Files | The program in `%LOCALAPPDATA%\Programs\snisplit`; log, learned sites and lists in `%LOCALAPPDATA%\snisplit`; settings in `%APPDATA%\snisplit` |
 | PATH | That program folder, so `snisplit` works in a terminal |
 | Proxy setting | Only with `snisplit browser on`: your user's "Use setup script" address |
-| Network | Listens on `127.0.0.1` ports 8881, 443 and 80, which only this computer can reach |
+| DNS setting | Only with `snisplit dns on`: connected adapters use `127.0.0.1` first and your previous server second; Windows 11 "DNS over HTTPS" flags on those adapters are put aside meanwhile. Everything is saved in `%APPDATA%\snisplit\dns-backup.json` and put back by `snisplit dns off` |
+| Firewall | Only with `snisplit share on`: a rule letting devices on your local network (and nothing else) reach port 8881 |
+| Network | Listens on `127.0.0.1` ports 8881, 443 and 80 (and 53 with `dns on`), which only this computer can reach; with `share on`, port 8881 also takes connections from the local network, nothing farther |
 
 **What it connects to on its own:**
 
@@ -120,6 +132,8 @@ telemetry or usage data anywhere.
   (Cloudflare, Google, Akamai, CloudFront) once a TLS handshake has shown they hold the site's certificate
 - DNS-over-HTTPS servers (Google, Cloudflare, AdGuard, OpenDNS, DNS.SB, Quad9) to look up blocked sites; in browser mode, every site you open.
   For a site blocked by address, Google's is also asked which servers the site uses in a few other countries
+- With `dns on`, the first time an app asks for a name (then once a day): one TLS handshake to
+  that site, to find out whether the ISP blocks it by name
 - GitHub, once a day: the newest site list and [strategy](lists/strategy.json)
 - With ad blocking on, once a day: the [HaGeZi](https://github.com/hagezi/dns-blocklists) and [hostsVN](https://github.com/bigdargon/hostsVN) lists
 - Steam's store, every few hours: a self-test that it still gets through

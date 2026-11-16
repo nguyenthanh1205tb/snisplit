@@ -87,3 +87,25 @@ func FuzzParseStrategy(f *testing.F) {
 		}
 	})
 }
+
+func FuzzDNSQuery(f *testing.F) {
+	f.Add(dnsQuery("example.com"))
+	_, sub, _ := net.ParseCIDR("116.14.0.0/24")
+	f.Add(dnsQueryFor(dnsQ{"example.com", typeAAAA, sub}))
+	f.Add([]byte{0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 41, 0x10, 0})
+	f.Fuzz(func(t *testing.T, msg []byte) {
+		q, ok := parseQuestion(msg)
+		if !ok {
+			return
+		}
+		if q.end > len(msg) || q.udp < 512 {
+			t.Fatalf("question %+v for %d bytes", q, len(msg))
+		}
+		r := pointAt(msg, q, localhost4, nil, 60)
+		if _, ok := parseQuestion(append([]byte(nil), r...)); r[2]&0x80 == 0 || !ok && q.end > 12 {
+			t.Fatalf("bad reply % x", r)
+		}
+		minTTL(r)
+		capTTL(r, 10)
+	})
+}

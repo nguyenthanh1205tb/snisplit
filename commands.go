@@ -83,6 +83,8 @@ func cmdRun(args []string) error {
 	if ip := net.ParseIP(o.cfg.listen); ip == nil || !ip.IsLoopback() {
 		log.Printf("WARNING: listening on %s exposes an open proxy to your network", o.cfg.listen)
 	}
+	saved := loadSettings()
+	o.cfg.share = saved.Share
 	p := newProxy(o.cfg, newResolver(o.dns == "doh"), loadState(statePath()))
 	p.applyStrategy(loadStrategy())
 	st := p.strat.Load()
@@ -93,7 +95,12 @@ func cmdRun(args []string) error {
 	if err := p.listenAll(); err != nil {
 		return err
 	}
-	p.applyAdblock(loadSettings())
+	if saved.DNS { // the computer's DNS points here
+		if err := p.startDNS(dnsFallbacks(loadDNSBackup(dnsBackupPath()))); err != nil {
+			log.Printf("WARNING: %v; Windows uses the fallback DNS server meanwhile", err)
+		}
+	}
+	p.applyAdblock(saved)
 	p.background(true)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -257,6 +264,13 @@ func cmdStatus(args []string) error {
 			fmt.Printf("adblock   on: %d domains, %d requests blocked\n", a.Domains, a.Blocked)
 		} else {
 			fmt.Println("adblock   off")
+		}
+		if d := s.DNS; d != nil {
+			fmt.Printf("dns       on (all apps): %d lookups, %d ads blocked, %d sent through snisplit, %d blocked sites found\n",
+				d.Queries, d.AdsBlocked, d.Redirected, d.Learned)
+		}
+		if s.Share != "" {
+			fmt.Printf("share     phones on this network: %s\n", s.Share)
 		}
 	} else {
 		fmt.Println("stopped")

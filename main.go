@@ -31,7 +31,9 @@ Usage:
   snisplit hosts show           print the hostnames that would be installed
   snisplit browser on|off       send every site in your browsers through snisplit;
                                 blocked ones are found and split automatically
-  snisplit adblock on|off       block ad, tracker and malware domains (browser mode)
+  snisplit dns on|off           every app, not just browsers: the computer's DNS points at
+                                snisplit, which opens blocked sites and blocks ads (Windows)
+  snisplit adblock on|off       block ad, tracker and malware domains (browser or dns mode)
   snisplit upstream <url>|off   last-resort proxy (socks5:// or http://) for sites
                                 no split method gets through
   snisplit tray                 show a notification-area icon (Windows)
@@ -80,6 +82,8 @@ func main() {
 		err = cmdTray(args)
 	case "browser":
 		err = cmdBrowser(args)
+	case "dns":
+		err = cmdDNS(args)
 	case "adblock":
 		err = cmdAdblock(args)
 	case "uninstall":

@@ -120,6 +120,9 @@ type proxy struct {
 
 	mu        sync.Mutex
 	listeners []net.Listener
+	closers   []io.Closer // DNS sockets
+
+	dns atomic.Pointer[dnsServer] // nil unless "snisplit dns on"
 }
 
 func newProxy(cfg config, res *resolver, st *state) *proxy {
@@ -223,6 +226,9 @@ func (p *proxy) close() {
 	defer p.mu.Unlock()
 	for _, l := range p.listeners {
 		l.Close()
+	}
+	for _, c := range p.closers {
+		c.Close()
 	}
 	p.state.save()
 }
@@ -836,8 +842,11 @@ func (p *proxy) handleLocal(c net.Conn, req *http.Request) {
 	case statusPath:
 		b, _ := json.Marshal(p.status())
 		writeResponse(c, "application/json", b)
-	case reloadPath: // re-read settings.json (ad blocking) without dropping connections
+	case reloadPath: // re-read settings.json (ad blocking, DNS fallbacks) without dropping connections
 		p.applyAdblock(loadSettings())
+		if d := p.dns.Load(); d != nil {
+			d.setFallback(dnsFallbacks(loadDNSBackup(dnsBackupPath())))
+		}
 		writeResponse(c, "text/plain", []byte("ok\n"))
 	default:
 		io.WriteString(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -850,25 +859,26 @@ func writeResponse(w io.Writer, ctype string, body []byte) {
 }
 
 type statusInfo struct {
-	PID           int      `json:"pid"`
-	SupervisorPID int      `json:"supervisor_pid,omitempty"`
-	Restarts      int      `json:"restarts"`
-	Version       string   `json:"version"`
-	Uptime        string   `json:"uptime"`
-	Mode          string   `json:"mode"`
-	Transparent   bool     `json:"transparent"`
-	Port          int      `json:"port"`
-	Connections   int64    `json:"connections"`
-	Failures      int64    `json:"failures"`
-	Retries       int64    `json:"retries"`
-	ViaUpstream   int64    `json:"via_upstream"`
-	ViaOtherIP    int64    `json:"via_other_address"`
-	TopFailures   []string `json:"top_failures,omitempty"`
-	Health        health   `json:"health"`
-	Strategy      int      `json:"strategy"`
-	Upstream      string   `json:"upstream,omitempty"`
-	Learned       []string `json:"learned,omitempty"`
-	Adblock       *adStats `json:"adblock,omitempty"`
+	PID           int       `json:"pid"`
+	SupervisorPID int       `json:"supervisor_pid,omitempty"`
+	Restarts      int       `json:"restarts"`
+	Version       string    `json:"version"`
+	Uptime        string    `json:"uptime"`
+	Mode          string    `json:"mode"`
+	Transparent   bool      `json:"transparent"`
+	Port          int       `json:"port"`
+	Connections   int64     `json:"connections"`
+	Failures      int64     `json:"failures"`
+	Retries       int64     `json:"retries"`
+	ViaUpstream   int64     `json:"via_upstream"`
+	ViaOtherIP    int64     `json:"via_other_address"`
+	TopFailures   []string  `json:"top_failures,omitempty"`
+	Health        health    `json:"health"`
+	Strategy      int       `json:"strategy"`
+	Upstream      string    `json:"upstream,omitempty"`
+	Learned       []string  `json:"learned,omitempty"`
+	Adblock       *adStats  `json:"adblock,omitempty"`
+	DNS           *dnsStats `json:"dns,omitempty"` // "snisplit dns on"
 }
 
 type adStats struct {
@@ -887,6 +897,7 @@ func (p *proxy) status() statusInfo {
 	}
 	return statusInfo{
 		Adblock:       ads,
+		DNS:           dnsStatsOf(p.dns.Load()),
 		PID:           os.Getpid(),
 		SupervisorPID: p.supervisorPID,
 		Restarts:      p.restarts,

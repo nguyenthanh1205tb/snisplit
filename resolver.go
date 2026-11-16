@@ -267,25 +267,91 @@ func (r *resolver) dohAny(ctx context.Context, q dnsQ, eps []string) ([]net.IP, 
 
 // doh sends one RFC 8484 GET query.
 func (r *resolver) doh(ctx context.Context, endpoint string, q dnsQ) ([]net.IP, int, error) {
-	u := endpoint + "?dns=" + base64.RawURLEncoding.EncodeToString(dnsQueryFor(q))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Accept", "application/dns-message")
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("DoH %s: HTTP %d", endpoint, resp.StatusCode)
-	}
-	msg, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	msg, err := r.dohRaw(ctx, endpoint, dnsQueryFor(q))
 	if err != nil {
 		return nil, 0, err
 	}
 	return parseDNSAnswer(msg)
+}
+
+// dohRaw sends a DNS message (ID 0) to endpoint and returns the response.
+func (r *resolver) dohRaw(ctx context.Context, endpoint string, query []byte) ([]byte, error) {
+	u := endpoint + "?dns=" + base64.RawURLEncoding.EncodeToString(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/dns-message")
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("DoH %s: HTTP %d", endpoint, resp.StatusCode)
+	}
+	msg, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return nil, err
+	}
+	if len(msg) < 12 {
+		return nil, errors.New("short DNS response")
+	}
+	return msg, nil
+}
+
+// exchange forwards any DNS query over DoH, two servers at a time,
+// healthiest first, and returns the first response with the query's ID.
+func (r *resolver) exchange(ctx context.Context, query []byte) ([]byte, error) {
+	if len(query) < 12 {
+		return nil, errors.New("short DNS query")
+	}
+	q := append([]byte(nil), query...)
+	q[0], q[1] = 0, 0 // RFC 8484: ID 0 keeps responses cacheable
+	type result struct {
+		ep  string
+		msg []byte
+		err error
+	}
+	var lastErr error
+	eps := r.ordered()
+	for i := 0; i < len(eps); i += 2 {
+		batch := eps[i:min(i+2, len(eps))]
+		bctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		ch := make(chan result, len(batch))
+		for _, ep := range batch {
+			go func() {
+				msg, err := r.dohRaw(bctx, ep, q)
+				ch <- result{ep, msg, err}
+			}()
+		}
+		var found []byte
+		for range batch {
+			res := <-ch
+			if found != nil {
+				continue
+			}
+			r.mark(res.ep, res.err == nil)
+			if res.err != nil {
+				lastErr = res.err
+				continue
+			}
+			found = res.msg
+			cancel()
+		}
+		cancel()
+		if found != nil {
+			found[0], found[1] = query[0], query[1]
+			return found, nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no DoH server answered")
+	}
+	return nil, lastErr
 }
 
 // dnsQuery builds a DNS query (ID 0, recursion desired) for host's A records.

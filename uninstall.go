@@ -13,6 +13,11 @@ import (
 // program itself and its PATH entry.
 func cmdUninstall(args []string) error {
 	s := loadSettings()
+	if s.DNS { // first, while the DNS backup is still there
+		if err := cmdDNS([]string{"off"}); err != nil {
+			fmt.Println("dns mode:", err)
+		}
+	}
 	if s.Browser {
 		if err := cmdBrowser([]string{"off"}); err != nil {
 			fmt.Println("browser mode:", err)

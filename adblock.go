@@ -18,7 +18,8 @@ import (
 )
 
 // Ad blocking: in browser mode every site goes through snisplit, so it can
-// refuse connections to ad, tracker and malware domains. A blocked domain
+// refuse connections to ad, tracker and malware domains; in dns mode every
+// app's lookups do, and blocked names get 0.0.0.0. A blocked domain
 // also blocks its subdomains. Like DNS blockers it works per domain: it
 // cannot hide empty ad boxes or ads served from the site's own domain.
 
@@ -321,8 +322,8 @@ func cmdAdblock(args []string) error {
 		if len(s.Block) > 0 {
 			fmt.Printf("  also blocked: %s\n", strings.Join(s.Block, ", "))
 		}
-		if s.Adblock && !s.Browser {
-			fmt.Println("  note: it only works in browser mode - snisplit browser on")
+		if s.Adblock && !s.Browser && !s.DNS {
+			fmt.Println("  note: it works in browser mode (snisplit browser on) or for all apps (snisplit dns on)")
 		}
 		fmt.Println(`
   snisplit adblock on [lists]                  turn on; lists: light, normal, pro, vn or URLs,
@@ -414,8 +415,8 @@ func cmdAdblock(args []string) error {
 	}
 	reloadProxy()
 	fmt.Printf("ad blocking %s\n", onOff(s.Adblock))
-	if s.Adblock && !s.Browser {
-		fmt.Println("it only works in browser mode: snisplit browser on")
+	if s.Adblock && !s.Browser && !s.DNS {
+		fmt.Println("it works in browser mode (snisplit browser on) or for all apps (snisplit dns on)")
 	}
 	return nil
 }

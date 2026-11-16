@@ -171,8 +171,8 @@ func cmdDoctor(args []string) error {
 		default:
 			d.ok("ad blocking: %d domains, %d requests blocked", a.Adblock.Domains, a.Adblock.Blocked)
 		}
-		if !set.Browser {
-			d.warn("ad blocking only works in browser mode", "snisplit browser on")
+		if !set.Browser && !set.DNS {
+			d.warn("ad blocking works in browser mode or dns mode, and both are off", "snisplit browser on   (or for all apps: snisplit dns on)")
 		}
 	}
 	if set.Browser {
@@ -180,6 +180,20 @@ func cmdDoctor(args []string) error {
 			d.warn("browser mode is on, but the system proxy setting was changed to "+orNone(cur), "snisplit browser on")
 		} else {
 			d.ok("browser mode on: browsers use %s", browserPAC())
+		}
+	}
+	if set.DNS {
+		here, other := systemDNSStatus()
+		switch {
+		case status != nil && status.DNS == nil:
+			d.fail("dns mode is on but snisplit's DNS server is not running (port 53 taken?)", "see the log; snisplit dns off puts the DNS setting back")
+		case askLocalDNS(3*time.Second) != nil:
+			d.fail("snisplit's DNS server on 127.0.0.1:53 does not answer", "snisplit stop, then snisplit start")
+		case len(other) > 0:
+			d.warn("these network adapters do not use snisplit for DNS: "+strings.Join(other, ", "), "snisplit dns on")
+		case status != nil:
+			s := status.DNS
+			d.ok("dns mode on (%s): %d lookups, %d ads blocked, %d sent through snisplit", strings.Join(here, ", "), s.Queries, s.AdsBlocked, s.Redirected)
 		}
 	}
 

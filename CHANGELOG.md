@@ -9,8 +9,12 @@
   Windows falls back to the previous DNS server whenever snisplit is not running, and
   `snisplit dns off` puts everything back, including Windows 11 "DNS over HTTPS" settings
 - `snisplit share on`: phones and tablets on the same Wi-Fi use snisplit too, with the same
-  unblocking and ad blocking. The tray shows a QR code that opens a setup page on the phone.
-  Only the local network can connect; phones go direct when the computer is off
+  unblocking and ad blocking. The tray shows a QR code that opens a setup page on the phone,
+  in Vietnamese, with the steps for that phone: on an iPhone, paste one address (no Wi-Fi
+  password needed) or install a configuration profile; on Android, paste one address.
+  Phones find the computer by its name (`<computer>.local`), so they keep working when the
+  router gives it another address. Only the local network can connect; phones go direct
+  when the computer is off
 - Both in the tray menu: "All apps (system DNS)", "Share with phones (Wi-Fi)", "Phone setup"
 - `settings.json` is read even when an editor saved it with a byte order mark
 

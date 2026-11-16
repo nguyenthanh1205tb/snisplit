@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -114,6 +115,10 @@ func TestPhonePagePerDevice(t *testing.T) {
 	if lanIP() == nil {
 		t.Skip("no local network address")
 	}
+	tmp := filepath.Join(t.TempDir(), "settings.json")
+	old := settingsPath
+	settingsPath = func() string { return tmp }
+	defer func() { settingsPath = old }()
 	p := newProxy(config{listen: "127.0.0.1", port: 8881, share: true}, newResolver(false), nil)
 	page := func(ua string) string {
 		return serveLocal(t, p, "GET "+phonePath+" HTTP/1.1\r\nHost: 192.168.1.5:8881\r\nUser-Agent: "+ua+"\r\n\r\n", "192.168.1.30:5555")
@@ -133,5 +138,20 @@ func TestPhonePagePerDevice(t *testing.T) {
 	}
 	if bad := serveLocal(t, p, "GET "+phoneProfilePath+"?ssid= HTTP/1.1\r\nHost: x\r\n\r\n", "192.168.1.30:5555"); !strings.HasPrefix(bad, "HTTP/1.1 400") {
 		t.Errorf("empty Wi-Fi name accepted:\n%.100s", bad)
+	}
+
+	// the iPhone page offers the no-password way first, and remembers names
+	if i, j := strings.Index(ios, "Cách 1"), strings.Index(ios, "Cách 2"); i < 0 || j < i || !strings.Contains(ios[i:j], "proxy.pac?all=1") {
+		t.Error("the no-password way is not first")
+	}
+	serveLocal(t, p, "GET "+phoneProfilePath+"?ssid=Nha+Lan HTTP/1.1\r\nHost: x\r\n\r\n", "192.168.1.30:5555")
+	ios = page("Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X)")
+	for _, want := range []string{`<option value="Nha Lan">`, `<option value="Nha Minh">`} {
+		if !strings.Contains(ios, want) {
+			t.Errorf("remembered Wi-Fi name missing: %s", want)
+		}
+	}
+	if s := loadSettings(); len(s.WiFi) != 2 || s.WiFi[0] != "Nha Lan" {
+		t.Errorf("saved names %v", s.WiFi)
 	}
 }

@@ -47,21 +47,33 @@ func (p *proxy) servePhonePage(c net.Conn, req *http.Request, local bool) {
 <p>Điện thoại phải dùng <b>cùng Wi-Fi</b> với máy tính này. Mở camera điện thoại và quét mã:</p>
 <p class="qr"><img src="` + phoneQRPath + `" alt="Mã QR" width="232" height="232"></p>
 <p class="muted">Hoặc mở trên điện thoại: <code>` + html.EscapeString(sharedURL(ip, p.cfg.port, phonePath)) + `</code><br>
-iPhone: trang đó cho tải một hồ sơ cài sẵn mọi thứ. Android: dán một địa chỉ vào cài đặt Wi-Fi.</p>`
+Trang đó hướng dẫn riêng cho iPhone và Android.</p>`
 		} else {
 			body = `<h1>Dùng snisplit trên điện thoại này</h1>`
 		}
 		copyBox := `<div class="row"><code id="pac">` + pac + `</code><button type="button" onclick="cp(this)">Sao chép</button></div>`
-		iosManual := `<p>Cài đặt → Wi-Fi → bấm <b>ⓘ</b> cạnh mạng đang dùng → <b>Định cấu hình proxy</b> → <b>Tự động</b> → dán địa chỉ trên vào ô <b>URL</b> → Lưu.</p>`
-		ios := `<h2>iPhone, iPad: cài tự động</h2>
+		names := wifiNames()
+		var options strings.Builder
+		for _, n := range names {
+			options.WriteString(`<option value="` + html.EscapeString(n) + `">`)
+		}
+		prefill := ""
+		if len(names) > 0 {
+			prefill = names[0]
+		}
+		ios := `<h2>iPhone, iPad</h2>
+<h3>Cách 1: dán địa chỉ (không cần mật khẩu Wi-Fi)</h3>` + copyBox + `
+<p>Bấm <b>Sao chép</b> → mở <b>Cài đặt</b> → <b>Wi-Fi</b> → bấm <b>ⓘ</b> cạnh mạng đang dùng → kéo xuống <b>Định cấu hình proxy</b> → <b>Tự động</b> → dán vào ô <b>URL</b> → <b>Lưu</b>.</p>
+<h3>Cách 2: cài hồ sơ (không phải dán, iPhone hỏi mật khẩu Wi-Fi)</h3>
 <form action="` + phoneProfilePath + `" method="get">
-<label for="ssid">Tên Wi-Fi đang dùng (đúng chữ hoa, chữ thường):</label>
-<div class="row"><input id="ssid" name="ssid" value="` + html.EscapeString(currentSSID()) + `" required maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Ví dụ: Nha Minh 5G">
+<label for="ssid">Tên Wi-Fi đang dùng (đúng chữ hoa, chữ thường)` + map[bool]string{true: ", bấm vào ô để chọn tên đã dùng", false: ""}[len(names) > 1] + `:</label>
+<div class="row"><input id="ssid" name="ssid" list="wifis" value="` + html.EscapeString(prefill) + `" required maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Ví dụ: Nha Minh 5G">
+<datalist id="wifis">` + options.String() + `</datalist>
 <button type="submit">Tải hồ sơ</button></div></form>
 <ol><li>Bấm <b>Cho phép</b> khi iPhone hỏi tải hồ sơ cấu hình.</li>
 <li>Mở <b>Cài đặt</b> → <b>Đã tải về hồ sơ</b> (ngay dưới tên bạn) → <b>Cài đặt</b> → nhập mật mã máy.</li>
-<li>Nếu được hỏi, nhập <b>mật khẩu Wi-Fi</b>. Xong.</li></ol>
-<p class="muted">Mở trang này bằng <b>Safari</b>: trình duyệt khác không tải được hồ sơ. iOS ghi "Chưa được xác minh" vì hồ sơ không có chữ ký của công ty; hồ sơ chỉ đặt proxy cho Wi-Fi này.
+<li>Nhập <b>mật khẩu Wi-Fi</b> khi được hỏi (iOS bắt buộc với hồ sơ Wi-Fi). Xong.</li></ol>
+<p class="muted">Cần mở bằng <b>Safari</b>. iOS ghi "Chưa được xác minh" vì hồ sơ không có chữ ký của công ty; hồ sơ chỉ đặt proxy cho Wi-Fi này và không chứa mật khẩu.
 Gỡ: Cài đặt → Cài đặt chung → VPN &amp; Quản lý thiết bị → snisplit → Xoá hồ sơ, rồi bấm vào Wi-Fi và nhập lại mật khẩu.</p>`
 		android := `<h2>Android</h2>
 <p><b>1.</b> Sao chép địa chỉ này:</p>` + copyBox + `
@@ -69,11 +81,11 @@ Gỡ: Cài đặt → Cài đặt chung → VPN &amp; Quản lý thiết bị �
 <p class="muted">Samsung: bấm ⚙ cạnh Wi-Fi → <b>Xem thêm</b> → Proxy → Tự động. Muốn tắt: chọn Proxy → <b>Không</b>.</p>`
 		switch kind {
 		case "ios":
-			body += ios + `<details><summary>Cách làm tay</summary>` + copyBox + iosManual + `</details>`
+			body += ios
 		case "android":
 			body += android
 		default:
-			body += ios + `<details><summary>iPhone: cách làm tay</summary>` + copyBox + iosManual + `</details>` + android
+			body += ios + android
 		}
 		body += `<h2>Lưu ý</h2>
 <ul><li>Máy tính phải đang bật và chạy snisplit. Khi máy tính tắt, điện thoại tự đi thẳng, vẫn dùng mạng bình thường.</li>
@@ -95,11 +107,11 @@ code{font:14px ui-monospace,Consolas,monospace;word-break:break-all}.muted{color
 .row code,.row input{flex:1;min-width:0}
 input{font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
 button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 14px;font:inherit;cursor:pointer;white-space:nowrap}
-details{margin:12px 0}summary{cursor:pointer;color:var(--muted)}li{margin:4px 0}label{display:block;margin-top:8px}
+h3{font-size:16px;margin:20px 0 6px}li{margin:4px 0}label{display:block;margin-top:8px}
 </style></head><body><main>`
 
 const phonePageTail = `</main><script>
-function cp(b){var t=document.getElementById('pac').textContent;
+function cp(b){var t=b.previousElementSibling.textContent;
 function ok(){b.textContent='Đã sao chép'}
 if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(ok);return}
 var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
@@ -115,10 +127,42 @@ func (p *proxy) servePhoneProfile(c net.Conn, req *http.Request) {
 		io.WriteString(c, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 		return
 	}
+	rememberWiFi(ssid)
 	body := mobileconfig(ssid, sharedURL(ip, p.cfg.port, "/proxy.pac?all=1"))
 	fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-apple-aspen-config\r\n"+
 		"Content-Disposition: attachment; filename=\"snisplit.mobileconfig\"\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", len(body))
 	io.WriteString(c, body)
+}
+
+// wifiNames lists Wi-Fi names to offer: the one this computer is on, then
+// those typed on the setup page before, newest first.
+func wifiNames() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range append([]string{currentSSID()}, loadSettings().WiFi...) {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// rememberWiFi keeps a typed Wi-Fi name (the last five), so the next phone
+// can pick it instead of typing it.
+func rememberWiFi(ssid string) {
+	s := loadSettings()
+	if len(s.WiFi) > 0 && s.WiFi[0] == ssid {
+		return
+	}
+	names := []string{ssid}
+	for _, n := range s.WiFi {
+		if n != ssid && len(names) < 5 {
+			names = append(names, n)
+		}
+	}
+	s.WiFi = names
+	saveSettings(s)
 }
 
 func newUUID() string {

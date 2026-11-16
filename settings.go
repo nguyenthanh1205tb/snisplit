@@ -19,8 +19,9 @@ type settings struct {
 	Allow       []string `json:"allow,omitempty"`        // never blocked
 	Block       []string `json:"block,omitempty"`        // blocked as well as the list
 
-	DNS   bool `json:"dns,omitempty"`   // "snisplit dns on": the computer's DNS points at snisplit
-	Share bool `json:"share,omitempty"` // "snisplit share on": phones on the local network use snisplit
+	DNS   bool     `json:"dns,omitempty"`   // "snisplit dns on": the computer's DNS points at snisplit
+	Share bool     `json:"share,omitempty"` // "snisplit share on": phones on the local network use snisplit
+	WiFi  []string `json:"wifi,omitempty"`  // Wi-Fi names typed on the phone setup page, newest first
 }
 
 var settingsPath = func() string {

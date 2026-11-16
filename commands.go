@@ -241,8 +241,8 @@ func cmdStatus(args []string) error {
 		if s.SupervisorPID > 0 {
 			fmt.Printf("restarts  %d (supervisor pid %d)\n", s.Restarts, s.SupervisorPID)
 		}
-		fmt.Printf("traffic   %s, %d failed, %d needed another split mode, %d via upstream\n",
-			plural(s.Connections, "connection"), s.Failures, s.Retries, s.ViaUpstream)
+		fmt.Printf("traffic   %s, %d failed, %d needed another split mode, %d another address, %d via upstream\n",
+			plural(s.Connections, "connection"), s.Failures, s.Retries, s.ViaOtherIP, s.ViaUpstream)
 		if len(s.TopFailures) > 0 {
 			fmt.Printf("failing   %s\n", strings.Join(s.TopFailures, ", "))
 		}

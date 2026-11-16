@@ -115,7 +115,7 @@ func (r *resolver) lookup(ctx context.Context, host string) ([]net.IP, error) {
 
 	var dohErr error
 	if r.useDoH {
-		ips, ttl, err := r.dohAny(ctx, host)
+		ips, ttl, err := r.dohAny(ctx, dnsQ{host: host, qtype: typeA}, r.ordered())
 		if err == nil {
 			r.remember(host, ips, ttl)
 			return ips, nil
@@ -163,16 +163,64 @@ func (r *resolver) remember(host string, ips []net.IP, ttl int) {
 
 var errNXDomain = errors.New("no such host")
 
+// dnsQ is one question: host's A or AAAA records, optionally as seen from
+// another network (EDNS client subnet).
+type dnsQ struct {
+	host   string
+	qtype  uint16
+	subnet *net.IPNet
+}
+
+const (
+	typeA    = 1
+	typeAAAA = 28
+)
+
+// googleDoH honour a client subnet sent with the query, so they can answer
+// as if the question came from another country.
+var googleDoH = []string{"https://8.8.8.8/dns-query", "https://8.8.4.4/dns-query"}
+
+// lookupAlt asks DoH only (no system DNS, no saved answers) for host's AAAA
+// records, or for its A records as seen from subnet. Answers are cached.
+func (r *resolver) lookupAlt(ctx context.Context, host string, qtype uint16, subnet *net.IPNet) ([]net.IP, error) {
+	if !r.useDoH {
+		return nil, errors.New("DoH is off")
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	key := fmt.Sprintf("%s|%d|%v", host, qtype, subnet)
+	r.mu.Lock()
+	e, ok := r.cache[key]
+	r.mu.Unlock()
+	if ok && time.Now().Before(e.expires) {
+		return e.ips, nil
+	}
+	eps := r.ordered()
+	if subnet != nil {
+		eps = googleDoH
+	}
+	ips, ttl, err := r.dohAny(ctx, dnsQ{host, qtype, subnet}, eps)
+	if errors.Is(err, errNXDomain) {
+		ips, ttl, err = nil, 300, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ttl = min(max(ttl, 60), 3600)
+	r.mu.Lock()
+	r.cache[key] = cacheEntry{ips, time.Now().Add(time.Duration(ttl) * time.Second)}
+	r.mu.Unlock()
+	return ips, nil
+}
+
 // dohAny asks the endpoints two at a time, healthiest first, and returns the
 // first usable answer.
-func (r *resolver) dohAny(ctx context.Context, host string) ([]net.IP, int, error) {
+func (r *resolver) dohAny(ctx context.Context, q dnsQ, eps []string) ([]net.IP, int, error) {
 	type result struct {
 		ep  string
 		ips []net.IP
 		ttl int
 		err error
 	}
-	eps := r.ordered()
 	var lastErr error
 	for i := 0; i < len(eps); i += 2 {
 		batch := eps[i:min(i+2, len(eps))]
@@ -180,7 +228,7 @@ func (r *resolver) dohAny(ctx context.Context, host string) ([]net.IP, int, erro
 		ch := make(chan result, len(batch))
 		for _, ep := range batch {
 			go func(ep string) {
-				ips, ttl, err := r.doh(bctx, ep, host)
+				ips, ttl, err := r.doh(bctx, ep, q)
 				ch <- result{ep, ips, ttl, err}
 			}(ep)
 		}
@@ -195,7 +243,7 @@ func (r *resolver) dohAny(ctx context.Context, host string) ([]net.IP, int, erro
 				lastErr = res.err
 				continue
 			}
-			if res.ips = usable(res.ips); len(res.ips) > 0 {
+			if res.ips = usable(res.ips); len(res.ips) > 0 || q.qtype != typeA {
 				found = &res
 				cancel()
 			}
@@ -217,9 +265,9 @@ func (r *resolver) dohAny(ctx context.Context, host string) ([]net.IP, int, erro
 	return nil, 0, lastErr
 }
 
-// doh sends one RFC 8484 GET query for host's A records.
-func (r *resolver) doh(ctx context.Context, endpoint, host string) ([]net.IP, int, error) {
-	u := endpoint + "?dns=" + base64.RawURLEncoding.EncodeToString(dnsQuery(host))
+// doh sends one RFC 8484 GET query.
+func (r *resolver) doh(ctx context.Context, endpoint string, q dnsQ) ([]net.IP, int, error) {
+	u := endpoint + "?dns=" + base64.RawURLEncoding.EncodeToString(dnsQueryFor(q))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, 0, err
@@ -241,19 +289,33 @@ func (r *resolver) doh(ctx context.Context, endpoint, host string) ([]net.IP, in
 }
 
 // dnsQuery builds a DNS query (ID 0, recursion desired) for host's A records.
-func dnsQuery(host string) []byte {
+func dnsQuery(host string) []byte { return dnsQueryFor(dnsQ{host: host, qtype: typeA}) }
+
+// dnsQueryFor builds the query for q, with an EDNS client subnet option
+// (RFC 7871) when q.subnet is set.
+func dnsQueryFor(q dnsQ) []byte {
 	b := []byte{0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0}
-	for _, label := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+	for _, label := range strings.Split(strings.TrimSuffix(q.host, "."), ".") {
 		if len(label) > 63 {
 			label = label[:63]
 		}
 		b = append(b, byte(len(label)))
 		b = append(b, label...)
 	}
-	return append(b, 0, 0, 1, 0, 1) // root, QTYPE A, QCLASS IN
+	b = append(b, 0, byte(q.qtype>>8), byte(q.qtype), 0, 1) // root, QTYPE, QCLASS IN
+	if q.subnet == nil || q.subnet.IP.To4() == nil {
+		return b
+	}
+	bits, _ := q.subnet.Mask.Size()
+	opt := append([]byte{0, 1, byte(bits), 0}, q.subnet.IP.To4()[:(bits+7)/8]...) // family IPv4, source prefix, scope 0
+	opt = append([]byte{0, 8, 0, byte(len(opt))}, opt...)                         // option 8: client subnet
+	b[11] = 1                                                                     // one additional record: OPT
+	b = append(b, 0, 0, 41, 0x10, 0, 0, 0, 0, 0, 0, byte(len(opt)))               // root, OPT, 4096-byte UDP, no flags
+	return append(b, opt...)
 }
 
-// parseDNSAnswer returns the A records of a DNS response and their lowest TTL.
+// parseDNSAnswer returns the A and AAAA records of a DNS response and their
+// lowest TTL.
 func parseDNSAnswer(msg []byte) (ips []net.IP, ttl int, err error) {
 	defer func() {
 		if recover() != nil {
@@ -283,8 +345,12 @@ func parseDNSAnswer(msg []byte) (ips []net.IP, ttl int, err error) {
 		t := int(binary.BigEndian.Uint32(msg[p+4:]))
 		l := int(binary.BigEndian.Uint16(msg[p+8:]))
 		p += 10
-		if typ == 1 && l == 4 {
+		switch {
+		case typ == typeA && l == 4:
 			ips = append(ips, net.IPv4(msg[p], msg[p+1], msg[p+2], msg[p+3]))
+			ttl = min(ttl, t)
+		case typ == typeAAAA && l == 16:
+			ips = append(ips, net.IP(append([]byte(nil), msg[p:p+16]...)))
 			ttl = min(ttl, t)
 		}
 		p += l

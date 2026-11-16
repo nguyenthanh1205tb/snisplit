@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.0 (2026-11-16)
+
+- Sites blocked by IP address get through too, still directly and at full speed: when every
+  usual address of a site fails, snisplit tries its IPv6 addresses, the servers it uses in other
+  countries (DNS client subnet), then other servers of its CDN (Cloudflare, Google, Akamai,
+  CloudFront), each checked with a TLS handshake against the site's certificate first. What
+  worked is remembered. Works for Steam and for every site in browser mode
+- Connections start on the next address after 400 ms instead of waiting for a dead one to time out
+- `snisplit status` counts connections that needed another address
+- Strategy version 2: the regions and CDNs to use can be updated without a release
+
 ## v0.8.4 (2026-11-16)
 
 - Dependency updates: `golang.org/x/sys` v0.50.0 (building from source now needs

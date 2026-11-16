@@ -24,6 +24,12 @@ type strategy struct {
 	SlowDelayMS int      `json:"slow_delay_ms"`
 	DoH         []string `json:"doh"`
 	Canary      []string `json:"canary"`
+
+	// For sites blocked by address: networks in other countries to ask DNS
+	// as (EDNS client subnet), and per CDN, sample host names and address
+	// ranges of its servers.
+	Regions []string            `json:"regions,omitempty"`
+	Edges   map[string][]string `json:"edges,omitempty"`
 }
 
 //go:embed lists/strategy.json
@@ -70,7 +76,43 @@ func parseStrategy(b []byte) (*strategy, error) {
 			return nil, fmt.Errorf("strategy: bad canary host %q", c)
 		}
 	}
+	for _, r := range s.Regions {
+		if _, n, err := net.ParseCIDR(r); err != nil || n.IP.To4() == nil || maskBits(n) < 16 || maskBits(n) > 24 {
+			return nil, fmt.Errorf("strategy: region %q must be an IPv4 network from /16 to /24", r)
+		}
+	}
+	for cdn, entries := range s.Edges {
+		if !cdnName(cdn) {
+			return nil, fmt.Errorf("strategy: bad CDN name %q", cdn)
+		}
+		for _, e := range entries {
+			if _, n, err := net.ParseCIDR(e); err == nil {
+				if n.IP.To4() == nil || maskBits(n) < 8 {
+					return nil, fmt.Errorf("strategy: %s range %q must be IPv4, /8 or smaller", cdn, e)
+				}
+			} else if !validName(e) || strings.HasPrefix(e, ".") {
+				return nil, fmt.Errorf("strategy: %s entry %q is neither a host name nor a range", cdn, e)
+			}
+		}
+	}
 	return &s, nil
+}
+
+func cdnName(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func maskBits(n *net.IPNet) int {
+	b, _ := n.Mask.Size()
+	return b
 }
 
 // loadStrategy returns the cached download if it is valid and at least as new

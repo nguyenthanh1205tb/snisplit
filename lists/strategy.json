@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "modes": ["both", "record", "tcp", "chunk", "disorder", "slow", "oob"],
   "delay_ms": 10,
   "slow_delay_ms": 300,
@@ -13,5 +13,12 @@
     "https://185.222.222.222/dns-query",
     "https://9.9.9.9/dns-query"
   ],
-  "canary": ["store.steampowered.com", "steamcommunity.com"]
+  "canary": ["store.steampowered.com", "steamcommunity.com"],
+  "regions": ["116.14.0.0/24", "14.198.0.0/24", "126.0.0.0/24", "114.32.0.0/24", "73.0.0.0/24"],
+  "edges": {
+    "akamai": ["a248.e.akamai.net", "steamcdn-a.akamaihd.net", "store.steampowered.com", "steamcommunity.com", "www.microsoft.com", "www.apple.com"],
+    "cloudflare": ["www.cloudflare.com", "cdnjs.cloudflare.com", "104.16.0.0/13", "172.64.0.0/13", "188.114.96.0/20"],
+    "cloudfront": ["d1.awsstatic.com", "aws.amazon.com"],
+    "google": ["www.google.com", "www.gstatic.com"]
+  }
 }

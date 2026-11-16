@@ -1,3 +1,6 @@
 User-agent: *
 Allow: /
 Sitemap: https://nguyenthanh1205tb.github.io/snisplit/sitemap.xml
+
+# For AI agents: a Markdown summary is at https://nguyenthanh1205tb.github.io/snisplit/llms.txt
+# and the full documentation at https://nguyenthanh1205tb.github.io/snisplit/llms-full.txt

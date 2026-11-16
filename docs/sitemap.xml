@@ -4,4 +4,12 @@
     <loc>https://nguyenthanh1205tb.github.io/snisplit/</loc>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://nguyenthanh1205tb.github.io/snisplit/llms.txt</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://nguyenthanh1205tb.github.io/snisplit/llms-full.txt</loc>
+    <changefreq>weekly</changefreq>
+  </url>
 </urlset>

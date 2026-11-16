@@ -1,0 +1,62 @@
+# snisplit
+
+> snisplit is a free, open-source (MIT) local proxy that gets around ISP blocking of websites such as Steam by name (SNI), e.g. on FPT, Viettel and VNPT in Vietnam. It splits the first, unencrypted message of each connection (the TLS ClientHello) so the site name is never whole in one packet. No VPN, no driver, no server in between: traffic goes straight to the site at full speed. Windows, macOS and Linux.
+
+Tiếng Việt: snisplit giúp vào lại Steam và các trang bị nhà mạng chặn theo tên miền (FPT, Viettel, VNPT) mà không cần VPN, không cài driver, không mất tốc độ. Cài bằng 1 lệnh. Dùng được cho mọi ứng dụng và cả điện thoại cùng Wi-Fi. Miễn phí, mã nguồn mở.
+
+What it does:
+
+- Splits the TLS ClientHello in 7 ways and remembers which works per site; follows the ISP when it changes how it blocks (strategy updated daily from GitHub).
+- Sites blocked by IP address: tries the site's IPv6 addresses, its servers in other countries, and other servers of its CDN (checked against the site's certificate), still directly.
+- DNS over HTTPS (8 providers), so the ISP's DNS blocks and poisoning do not matter.
+- Optional: every site in browsers (`browser on`), every app (`dns on`, Windows), ad blocking (`adblock on`), phones on the same Wi-Fi (`share on`), a last-resort SOCKS5/HTTP proxy (`upstream`).
+- It never decrypts HTTPS, has no certificate of its own, cannot see pages, passwords or cookies, and sends no telemetry.
+
+## Install
+
+- Windows (PowerShell, one line; asks for administrator rights once, to edit the hosts file): `irm https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.ps1 | iex`
+- macOS / Linux (Homebrew): `brew install nguyenthanh1205tb/tap/snisplit`, then `sudo snisplit hosts install && brew services start snisplit`
+- Releases with SHA-256 checksums and GitHub build provenance: https://github.com/nguyenthanh1205tb/snisplit/releases/latest (verify with `gh attestation verify <file> --repo nguyenthanh1205tb/snisplit`)
+
+After installing on Windows, snisplit runs now and at every login, with an icon next to the clock. Steam works once restarted.
+
+## Commands
+
+- `snisplit status`: state and traffic counters
+- `snisplit doctor`: checks the whole setup and says how to fix problems (prints "Everything looks fine." when all is well)
+- `snisplit check [host ...]`: tests which hosts are blocked and whether splitting helps
+- `snisplit start` / `snisplit stop`: run or stop the background proxy
+- `snisplit browser on|off`: every site in your browsers goes through snisplit; blocked ones are found automatically
+- `snisplit dns on|off`: every app, not just browsers (Windows): the computer's DNS points at snisplit; the previous DNS server stays as a fallback
+- `snisplit adblock on|off`: blocks ad, tracker and malware domains (browser or dns mode)
+- `snisplit share on|off`: phones on the same Wi-Fi use snisplit; shows a QR code that opens a setup page on the phone
+- `snisplit upstream <socks5://host:port|http://host:port>|off`: last-resort proxy for sites no split gets through
+- `snisplit hosts install|update|add|del|remove|show`: the hosts-file entries for Steam (all but `show` need admin or sudo)
+- `snisplit autostart on|off`: start with Windows (proxy and tray icon)
+- `snisplit tray`: the Windows notification-area icon
+- `snisplit update`: update to the latest release
+- `snisplit uninstall`: undo everything snisplit changed and remove it
+- `snisplit version`
+
+## Notes for agents helping a user
+
+- Commands are non-interactive and print plain text; `snisplit status` and `snisplit doctor` are safe to run any time.
+- These steps show a Windows administrator (UAC) prompt that the user must approve: the installer's hosts-file step, `hosts install|update|add|del|remove`, `dns on|off`, and `share on|off` (firewall rule). Tell the user to click Yes.
+- `browser on` changes the user's proxy setting; browsers that were open may need a restart.
+- To confirm it works: `snisplit doctor`, or open https://store.steampowered.com (blocked by the ISP without snisplit).
+- Everything is undone by `snisplit uninstall` (Homebrew: then `brew uninstall snisplit`).
+- Files: program in `%LOCALAPPDATA%\Programs\snisplit`; log, learned sites and lists in `%LOCALAPPDATA%\snisplit`; settings in `%APPDATA%\snisplit`.
+
+## Docs
+
+- [Full documentation (README as Markdown)](https://nguyenthanh1205tb.github.io/snisplit/llms-full.txt): install, extras, what snisplit changes on your computer, what it connects to, how to verify a download
+- [Website (Vietnamese)](https://nguyenthanh1205tb.github.io/snisplit/): guide and FAQ
+- [Source code](https://github.com/nguyenthanh1205tb/snisplit)
+- [Changelog](https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/CHANGELOG.md)
+- [Security policy](https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/SECURITY.md)
+
+## Optional
+
+- [Strategy file](https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/lists/strategy.json): split methods, DNS servers, regions and CDNs, updated without a release
+- [Steam site list](https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/lists/steam.txt)
+- [Issues](https://github.com/nguyenthanh1205tb/snisplit/issues) and [Discussions](https://github.com/nguyenthanh1205tb/snisplit/discussions)

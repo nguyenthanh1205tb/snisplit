@@ -32,10 +32,16 @@ Nếu Windows hỏi quyền thì bấm **Yes**. Xong: snisplit tự chạy cùng
 Nhà mạng chặn cả địa chỉ IP? snisplit tự tìm máy chủ khác của chính trang đó (IPv6, máy chủ ở
 nước khác, máy chủ khác cùng CDN) và vẫn đi thẳng tới trang, không qua máy trung gian.
 
+Muốn dùng cho **mọi ứng dụng** và cả **điện thoại** trong nhà? Bấm biểu tượng snisplit cạnh đồng hồ:
+
+- **All apps (system DNS)**: Discord, launcher game và mọi ứng dụng khác vào được trang bị chặn
+- **Share with phones (Wi-Fi)**: rồi **Phone setup (QR code)**, quét mã bằng camera điện thoại.
+  iPhone: dán một địa chỉ (không cần mật khẩu Wi-Fi) hoặc cài hồ sơ. Android: dán một địa chỉ.
+
 - `snisplit browser on`: vào được cả các trang web khác bị chặn trên trình duyệt
 - `snisplit dns on`: áp dụng cho **mọi ứng dụng** (Discord, launcher game...), không chỉ trình duyệt
 - `snisplit adblock on`: chặn quảng cáo và theo dõi (trên trình duyệt, hoặc mọi ứng dụng khi bật `dns on`)
-- `snisplit share on`: cho **điện thoại cùng Wi-Fi** dùng chung, quét mã QR là xong
+- `snisplit share on`: cho **điện thoại cùng Wi-Fi** dùng chung (quét mã QR, làm theo trang hướng dẫn)
 - `snisplit doctor`: kiểm tra lỗi và chỉ cách sửa
 - `snisplit uninstall`: gỡ sạch
 
@@ -76,7 +82,7 @@ sudo snisplit hosts install && brew services start snisplit
 snisplit browser on    # open any blocked website in your browsers
 snisplit dns on        # the same for every app, not just browsers (Windows)
 snisplit adblock on    # block ads and trackers (browsers, or every app with dns on)
-snisplit share on      # phones on the same Wi-Fi use snisplit too: scan the QR code
+snisplit share on      # phones on the same Wi-Fi use snisplit too (shows a QR code)
 ```
 
 All are also in the tray icon menu (Windows). Use `off` to turn them off.
@@ -86,6 +92,13 @@ answers ad domains with `0.0.0.0`, and sends sites blocked by name through its o
 It finds such sites by itself: the first time an app asks for a name, one TLS handshake
 checks whether the ISP cuts it off. If snisplit is not running, Windows falls back to your
 previous DNS server, so the internet keeps working.
+
+`share on` lets phones on the same Wi-Fi use snisplit, with the same unblocking and ad blocking.
+The QR code (in the terminal, or "Phone setup" in the tray) opens a setup page on the phone:
+on an iPhone, paste one address into the Wi-Fi's proxy setting (no password needed) or install
+a configuration profile; on Android, paste one address. Phones find the computer by its name
+(`<computer>.local`), so they keep working when the router gives it another address, and go
+direct when the computer is off.
 
 ## Something not working?
 
@@ -134,6 +147,8 @@ telemetry or usage data anywhere.
   For a site blocked by address, Google's is also asked which servers the site uses in a few other countries
 - With `dns on`, the first time an app asks for a name (then once a day): one TLS handshake to
   that site, to find out whether the ISP blocks it by name
+- With `share on`, now and then: one multicast DNS question on your local network, to check
+  that phones can find this computer by its name
 - GitHub, once a day: the newest site list and [strategy](lists/strategy.json)
 - With ad blocking on, once a day: the [HaGeZi](https://github.com/hagezi/dns-blocklists) and [hostsVN](https://github.com/bigdargon/hostsVN) lists
 - Steam's store, every few hours: a self-test that it still gets through

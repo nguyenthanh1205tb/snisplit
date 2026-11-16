@@ -9,6 +9,9 @@ func autostartValue() string { return "" }
 
 func autostartDisabled() bool { return false }
 
+// watchTray: there is no tray icon on this platform.
+func watchTray(string) {}
+
 func cmdTray(args []string) error {
 	return errors.New("the tray icon is only available on Windows; on macOS/Linux use: brew services start snisplit")
 }

@@ -5,10 +5,16 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime/debug"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"fyne.io/systray"
 	"golang.org/x/sys/windows"
@@ -48,15 +54,139 @@ func cmdTray(args []string) error {
 		fmt.Println("tray icon is already running")
 		return nil
 	}
-	t := &tray{exe: exe, start: *startProxy || os.Getenv("SNISPLIT_TRAY_START") == "1"}
+	openTrayLog()
+	os.Remove(trayQuitPath())
+	t := &tray{exe: exe, start: *startProxy || os.Getenv("SNISPLIT_TRAY_START") == "1",
+		readyCh: make(chan struct{}), taskbarCh: make(chan struct{})}
+	go t.watchReady()
+	waitForTaskbar()
+	close(t.taskbarCh)
 	systray.Run(t.ready, t.exit)
 	return nil
+}
+
+// ---------------------------------------------------------------- starting at login
+//
+// At login the tray can start before Explorer has a taskbar. Adding the icon
+// then fails and the tray would run without one, so it waits for the taskbar,
+// starts itself again if the icon still cannot be added, and the proxy's
+// supervisor starts it again if it is not running at all.
+
+const trayMutexName = `Local\snisplit-tray`
+
+// trayQuitPath marks that the user chose "Quit icon", so it is not restarted.
+func trayQuitPath() string { return filepath.Join(filepath.Dir(logPath()), "tray-quit") }
+
+// openTrayLog sends the tray's log, and the report of any crash, to tray.log.
+func openTrayLog() {
+	p := filepath.Join(filepath.Dir(logPath()), "tray.log")
+	if fi, err := os.Stat(p); err == nil && fi.Size() > 256<<10 {
+		os.Rename(p, p+".old")
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.LstdFlags)
+	debug.SetCrashOutput(f, debug.CrashOptions{})
+	log.Printf("tray: started, version %s, pid %d", version, os.Getpid())
+}
+
+// waitForTaskbar waits up to 3 minutes for Explorer's taskbar to exist.
+func waitForTaskbar() {
+	find := windows.NewLazySystemDLL("user32.dll").NewProc("FindWindowW")
+	class, _ := windows.UTF16PtrFromString("Shell_TrayWnd")
+	start := time.Now()
+	for time.Since(start) < 3*time.Minute {
+		if h, _, _ := find.Call(uintptr(unsafe.Pointer(class)), 0); h != 0 {
+			if waited := time.Since(start); waited > time.Second {
+				log.Printf("tray: waited %s for the taskbar", waited.Round(time.Second))
+			}
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	log.Printf("tray: no taskbar after 3 minutes, trying anyway")
+}
+
+// watchReady starts the proxy if the icon is slow to appear (Steam should not
+// wait for it), and starts a new tray if the icon never appears.
+func (t *tray) watchReady() {
+	select {
+	case <-t.readyCh:
+		return
+	case <-time.After(10 * time.Second):
+	}
+	if t.start {
+		if _, err := getStatus(defaultPort); err != nil {
+			log.Printf("tray: no icon yet; starting the proxy anyway")
+			t.run("start")
+		}
+	}
+	<-t.taskbarCh
+	select {
+	case <-t.readyCh:
+		return
+	case <-time.After(45 * time.Second):
+	}
+	n, _ := strconv.Atoi(os.Getenv("SNISPLIT_TRAY_ATTEMPT"))
+	log.Printf("tray: the icon could not be added to the taskbar (attempt %d)", n+1)
+	if n < 5 {
+		cmd := exec.Command(t.exe, "tray")
+		cmd.Env = append(os.Environ(), "SNISPLIT_TRAY_CHILD=1", "SNISPLIT_TRAY_ATTEMPT="+strconv.Itoa(n+1))
+		cmd.SysProcAttr = detachAttr()
+		cmd.Start()
+	}
+	os.Exit(3)
+}
+
+// trayRunning reports whether a tray icon process runs in this session.
+func trayRunning() bool {
+	name, _ := windows.UTF16PtrFromString(trayMutexName)
+	h, err := windows.OpenMutex(windows.SYNCHRONIZE, false, name)
+	if err != nil {
+		return false
+	}
+	windows.CloseHandle(h)
+	return true
+}
+
+// watchTray runs in the proxy's supervisor: when the login entry starts the
+// tray icon but none is running (it crashed, or never came up), and the user
+// did not quit it, it starts one, at most five times an hour.
+func watchTray(exe string) {
+	var starts []time.Time
+	for {
+		time.Sleep(30 * time.Second)
+		v := autostartValue()
+		if !strings.Contains(v, " tray") || autostartDisabled() || trayRunning() {
+			continue
+		}
+		if _, err := os.Stat(trayQuitPath()); err == nil {
+			continue
+		}
+		for len(starts) > 0 && time.Since(starts[0]) > time.Hour {
+			starts = starts[1:]
+		}
+		if len(starts) >= 5 {
+			continue
+		}
+		starts = append(starts, time.Now())
+		cmd := exec.Command(exe, "tray")
+		cmd.Env = append(os.Environ(), "SNISPLIT_TRAY_CHILD=1")
+		cmd.SysProcAttr = detachAttr()
+		if err := cmd.Start(); err == nil {
+			log.Printf("supervisor: the tray icon was not running; started it again")
+			cmd.Process.Release()
+		}
+	}
 }
 
 // trayMutex makes sure only one tray icon runs per user session. It waits a
 // little so a tray that is restarting after an update can take over.
 func trayMutex() bool {
-	name, _ := windows.UTF16PtrFromString(`Local\snisplit-tray`)
+	name, _ := windows.UTF16PtrFromString(trayMutexName)
 	for i := 0; i < 20; i++ {
 		h, err := windows.CreateMutex(nil, false, name)
 		if err == nil {
@@ -74,9 +204,11 @@ func trayMutex() bool {
 }
 
 type tray struct {
-	exe      string // path captured at start; still valid after an update renames the old file
-	start    bool
-	relaunch bool
+	exe       string // path captured at start; still valid after an update renames the old file
+	start     bool
+	relaunch  bool
+	readyCh   chan struct{} // closed when the icon is up
+	taskbarCh chan struct{} // closed when the taskbar exists (or we gave up waiting)
 }
 
 // run executes snisplit with args without showing a console window.
@@ -128,6 +260,8 @@ func runElevated(exe, args string) error {
 }
 
 func (t *tray) ready() {
+	close(t.readyCh)
+	log.Printf("tray: icon added")
 	// tray sizes only, all with the larger "compact" mark that stays readable at 16 px
 	trayIcon := func(st logo.State) []byte { return logo.ICO(st, 64, 16, 20, 24, 32, 40, 48, 64) }
 	iconOn, iconOff, iconWarn := trayIcon(logo.Running), trayIcon(logo.Stopped), trayIcon(logo.Failing)
@@ -340,6 +474,8 @@ func (t *tray) ready() {
 					mUpdate.SetTitle("Install update " + tag)
 				}
 			case <-mQuit.ClickedCh:
+				os.WriteFile(trayQuitPath(), []byte("quit from the menu\n"), 0o644)
+				log.Printf("tray: quit from the menu")
 				systray.Quit()
 				return
 			}
@@ -364,6 +500,7 @@ $app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell
 }
 
 func (t *tray) exit() {
+	log.Printf("tray: exiting (relaunch for update: %v)", t.relaunch)
 	if !t.relaunch {
 		return
 	}

@@ -8,7 +8,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"net"
 	"os"
@@ -97,57 +96,6 @@ func (p *proxy) servePhoneQR(c net.Conn) {
 	}
 	code.Scale = 8
 	writeResponse(c, "image/png", code.PNG())
-}
-
-// servePhonePage explains, in Vietnamese, how to set a phone up. On this
-// computer it also shows a QR code that opens the same page on the phone.
-func (p *proxy) servePhonePage(c net.Conn, local bool) {
-	ip := lanIP()
-	var body string
-	switch {
-	case !p.cfg.share:
-		body = `<h1>Chưa bật chia sẻ</h1><p>Trên máy tính, bật <b>Share with phones</b> ở biểu tượng snisplit cạnh đồng hồ, hoặc chạy <code>snisplit share on</code>.</p>`
-	case ip == nil:
-		body = `<h1>Không thấy mạng nội bộ</h1><p>Máy tính chưa kết nối Wi-Fi hoặc mạng dây trong nhà.</p>`
-	default:
-		pac := html.EscapeString(sharedURL(ip, p.cfg.port, "/proxy.pac?all=1"))
-		page := html.EscapeString(sharedURL(ip, p.cfg.port, phonePath))
-		if local {
-			body += `<h1>Dùng snisplit trên điện thoại</h1>
-<p>Điện thoại phải dùng <b>cùng Wi-Fi</b> với máy tính này. Mở camera điện thoại và quét mã:</p>
-<p class="qr"><img src="` + phoneQRPath + `" alt="Mã QR" width="232" height="232"></p>
-<p class="muted">Hoặc mở trên điện thoại: <code>` + page + `</code></p>`
-		} else {
-			body += `<h1>Dùng snisplit trên điện thoại này</h1>`
-		}
-		body += `<h2>1. Sao chép địa chỉ này</h2>
-<div class="copy"><code id="pac">` + pac + `</code><button onclick="cp()">Sao chép</button></div>
-<h2>2. Dán vào cài đặt Wi-Fi</h2>
-<p><b>iPhone, iPad:</b> Cài đặt → Wi-Fi → bấm <b>ⓘ</b> cạnh mạng đang dùng → <b>Định cấu hình proxy</b> → <b>Tự động</b> → dán vào ô <b>URL</b> → Lưu.</p>
-<p><b>Android:</b> Cài đặt → Wi-Fi → bấm vào (hoặc bánh răng cạnh) mạng đang dùng → Sửa / Nâng cao → <b>Proxy</b> → <b>Tự động cấu hình proxy</b> (Proxy Auto-Config) → dán vào ô <b>URL PAC</b> → Lưu.</p>
-<h2>Lưu ý</h2>
-<ul><li>Máy tính phải đang bật và chạy snisplit. Khi máy tính tắt, điện thoại tự đi thẳng, vẫn dùng mạng bình thường.</li>
-<li>Trang bị chặn mở được, và nếu máy tính bật chặn quảng cáo thì điện thoại cũng được chặn.</li>
-<li>Ứng dụng nào không theo cài đặt proxy của Wi-Fi thì không được áp dụng.</li>
-<li>Muốn tắt: vào lại chỗ Proxy, chọn <b>Tắt</b> / <b>Không</b>.</li></ul>`
-	}
-	doc := `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>snisplit trên điện thoại</title><style>
-:root{--bg:#fff;--fg:#14181f;--muted:#5b6472;--card:#f3f5f8;--accent:#2563eb}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1318;--fg:#e8ecf2;--muted:#9aa4b2;--card:#1a2029;--accent:#6ea0ff}}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:640px;margin:0 auto;padding:24px 16px 48px}h1{font-size:24px;margin:0 0 12px}h2{font-size:18px;margin:24px 0 8px}
-code{font:14px ui-monospace,Consolas,monospace;word-break:break-all}.muted{color:var(--muted)}
-.qr{background:#fff;display:inline-block;padding:12px;border-radius:12px}
-.copy{display:flex;gap:8px;align-items:center;background:var(--card);padding:12px;border-radius:10px}
-.copy code{flex:1}button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 14px;font:inherit;cursor:pointer}
-li{margin:4px 0}</style></head><body><main>` + body + `</main><script>
-function cp(){var t=document.getElementById('pac').textContent,b=event.target;
-function ok(){b.textContent='Đã sao chép'}
-if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(ok);return}
-var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
-try{document.execCommand('copy');ok()}catch(e){}document.body.removeChild(a)}</script></body></html>`
-	writeResponse(c, "text/html; charset=utf-8", []byte(doc))
 }
 
 // printQR draws text as a QR code in the terminal, two rows per line.

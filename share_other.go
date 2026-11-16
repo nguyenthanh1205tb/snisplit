@@ -6,3 +6,5 @@ package main
 func hasFirewall() bool     { return false }
 func firewallAllow() error  { return nil }
 func firewallRemove() error { return nil }
+
+func currentSSID() string { return "" }

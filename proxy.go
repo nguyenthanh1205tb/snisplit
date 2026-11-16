@@ -859,7 +859,9 @@ func (p *proxy) handleLocal(c net.Conn, req *http.Request) {
 		}
 		writeResponse(c, "application/x-ns-proxy-autoconfig", []byte(makePAC(p.cfg.names, p.cfg.port, all, proxyHost)))
 	case phonePath:
-		p.servePhonePage(c, local)
+		p.servePhonePage(c, req, local)
+	case phoneProfilePath:
+		p.servePhoneProfile(c, req)
 	case phoneQRPath:
 		p.servePhoneQR(c)
 	case statusPath:

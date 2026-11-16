@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.10.0 (2026-11-16)
+
+- `snisplit dns on` (Windows): every app, not just browsers. The computer's DNS points at
+  snisplit, which looks names up over DNS-over-HTTPS, answers ad domains with 0.0.0.0 (with ad
+  blocking on) and sends sites blocked by name through its own listeners. New blocked sites are
+  found by themselves: the first time an app asks for a name, one TLS handshake checks it.
+  Windows falls back to the previous DNS server whenever snisplit is not running, and
+  `snisplit dns off` puts everything back, including Windows 11 "DNS over HTTPS" settings
+- In the tray menu: "All apps (system DNS)"
+- `settings.json` is read even when an editor saved it with a byte order mark
+
 ## v0.9.1 (2026-11-16)
 
 - The tray icon no longer goes missing after logging in to Windows: it waits for the taskbar,

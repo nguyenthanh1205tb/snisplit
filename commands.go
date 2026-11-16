@@ -179,6 +179,7 @@ func cmdSupervise(args []string) error {
 	if err != nil {
 		return err
 	}
+	go watchTray(exe) // Windows: bring back a tray icon that should be running
 	backoff := time.Second
 	for restarts := 0; ; restarts++ {
 		cmd := exec.Command(exe, append([]string{"run"}, args...)...)

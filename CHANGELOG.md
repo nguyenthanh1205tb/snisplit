@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.1 (2026-11-16)
+
+- The tray icon no longer goes missing after logging in to Windows: it waits for the taskbar,
+  starts itself again if the icon cannot be added, and the proxy brings it back if it stops
+  (unless you chose "Quit icon"). The proxy starts after 10 seconds even if the icon is late
+- The tray writes `tray.log` next to `snisplit.log`, including the report of any crash
+
 ## v0.9.0 (2026-11-16)
 
 - Sites blocked by IP address get through too, still directly and at full speed: when every

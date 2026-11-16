@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,9 +52,9 @@ func (c config) httpsPort() int {
 }
 
 type proxyStats struct {
-	conns, fails, retries, viaUpstream atomic.Int64
-	mu                                 sync.Mutex
-	hostFails                          map[string]int
+	conns, fails, retries, viaUpstream, viaOtherIP atomic.Int64
+	mu                                             sync.Mutex
+	hostFails                                      map[string]int
 }
 
 func (s *proxyStats) fail(host string) {
@@ -107,6 +108,13 @@ type proxy struct {
 	health atomic.Pointer[health]
 	ads    atomic.Pointer[blocker] // nil when ad blocking is off
 
+	// other addresses for sites blocked by address (ipblock.go)
+	alts      []altTier      // nil: the real ones (tests replace them)
+	edgeRoots *x509.CertPool // nil: the system's
+	edgeMu    sync.Mutex
+	edges     map[string][]net.IP
+	edgesAt   time.Time
+
 	supervisorPID int // set when started by "snisplit start"
 	restarts      int
 
@@ -137,6 +145,9 @@ func newProxy(cfg config, res *resolver, st *state) *proxy {
 
 // applyStrategy switches to s: split-mode order, pauses and DoH servers.
 func (p *proxy) applyStrategy(s *strategy) {
+	p.edgeMu.Lock()
+	p.edgesAt = time.Time{} // the CDN list may have changed
+	p.edgeMu.Unlock()
 	p.strat.Store(s)
 	slowDelayNS.Store(int64(s.SlowDelayMS) * int64(time.Millisecond))
 	p.res.setEndpoints(s.DoH)
@@ -273,6 +284,15 @@ func (p *proxy) background(fetchRemote bool) {
 			}
 		}()
 	}
+	go func() { // CDN servers to try for sites blocked by address, ready before they are needed
+		time.Sleep(30 * time.Second)
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			p.edgePools(ctx)
+			cancel()
+			time.Sleep(6*time.Hour + time.Minute)
+		}
+	}()
 	go func() {
 		time.Sleep(20 * time.Second)
 		for {
@@ -414,13 +434,26 @@ func (p *proxy) dial(host string, port int) (net.Conn, string, error) {
 	defer cancel()
 	ips, err := p.candidateIPs(ctx, host)
 	if err == nil {
-		d := net.Dialer{Timeout: min(p.cfg.timeout, 8*time.Second)}
-		for _, ip := range ips {
-			c, derr := d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
-			if derr == nil {
-				return c, ip.String(), nil
+		lists := []func() []net.IP{func() []net.IP { return ips }}
+		for _, t := range p.altTiers() {
+			if !t.https { // the others need a TLS handshake to check
+				lists = append(lists, func() []net.IP { return t.ips(ctx, host, port, ips) })
 			}
-			err = derr
+		}
+		for i, list := range lists {
+			results, stop := dialStaggered(ctx, list(), port, min(p.cfg.timeout, 5*time.Second))
+			for r := range results {
+				if r.err != nil {
+					err = r.err
+					continue
+				}
+				stop()
+				if i > 0 {
+					p.stats.viaOtherIP.Add(1)
+				}
+				return r.c, r.ip.String(), nil
+			}
+			stop()
 		}
 	}
 	if p.cfg.upstream != nil {
@@ -430,6 +463,9 @@ func (p *proxy) dial(host string, port int) (net.Conn, string, error) {
 			p.stats.viaUpstream.Add(1)
 			return c, "upstream", nil
 		}
+	}
+	if err == nil {
+		err = fmt.Errorf("%s: no address answers", host)
 	}
 	return nil, "", err
 }
@@ -457,66 +493,157 @@ func (p *proxy) openTLS(host string, port int, hello []byte) (up net.Conn, first
 	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.timeout)
 	ips, lastErr := p.candidateIPs(ctx, host)
 	cancel()
-	deadline := time.Now().Add(2 * p.cfg.timeout)
-	attempts, total := 0, len(ips)*len(modes)
-	d := net.Dialer{Timeout: min(p.cfg.timeout, 8*time.Second)}
-ips:
-	for _, ip := range ips {
-		for _, m := range modes {
-			if time.Now().After(deadline) {
-				break ips
+	a := &attempt{p: p, host: host, port: port, hello: hello, hasSNI: hasSNI, listed: listed,
+		total: len(ips) * len(modes), deadline: time.Now().Add(2 * p.cfg.timeout), err: lastErr}
+	if up, first, via, ok := a.try(ips, modes, ""); ok {
+		return up, first, via, nil
+	}
+	if len(ips) > 0 {
+		// Every usual address failed: the site may be blocked by address.
+		// Look for others, with the first few methods only.
+		altModes := modes[:min(3, len(modes))]
+		a.deadline = time.Now().Add(p.cfg.timeout + 10*time.Second)
+		tried := append([]net.IP(nil), ips...)
+		for _, t := range p.altTiers() {
+			if time.Now().After(a.deadline) {
+				break
 			}
-			if attempts++; attempts > 1 {
-				p.stats.retries.Add(1)
-				p.debugf("RETRY %s via %s with %s (%v)", host, ip, m, lastErr)
-			}
-			c, derr := d.Dial("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
-			if derr != nil {
-				lastErr = derr
-				continue ips // this address is unreachable: no point trying other modes on it
-			}
-			if werr := sendPieces(c, plan(hello, m), p.delay()); werr != nil {
-				c.Close()
-				lastErr = werr
+			tctx, cancel := context.WithDeadline(context.Background(), a.deadline)
+			alt := t.ips(tctx, host, port, tried)
+			cancel()
+			if len(alt) == 0 {
 				continue
 			}
-			if !hasSNI {
-				return c, nil, ip.String() + " (" + m + ")", nil
+			p.debugf("ALT %s: trying %s addresses %v", host, t.name, alt)
+			tried = append(tried, alt...)
+			a.total += len(alt) * len(altModes)
+			if up, first, via, ok := a.try(alt, altModes, t.name); ok {
+				p.stats.viaOtherIP.Add(1)
+				return up, first, via, nil
 			}
-			wait := p.cfg.timeout
-			if attempts < total {
-				wait = min(wait, 7*time.Second)
-			}
-			c.SetReadDeadline(time.Now().Add(wait))
-			buf := make([]byte, 16<<10)
-			n, rerr := c.Read(buf)
-			c.SetReadDeadline(time.Time{})
-			if n > 0 {
-				if listed || m != "none" {
-					p.state.setRoute(host, ip.String(), m)
-				}
-				if !listed && m != "none" {
-					if !p.state.isLearned(host) {
-						log.Printf("LEARN %s is blocked; it will be split from now on", host)
-					}
-					p.state.learn(host)
-				}
-				return c, buf[:n], ip.String() + " (" + m + ")", nil
-			}
-			if rerr == nil {
-				rerr = io.ErrUnexpectedEOF
-			}
-			lastErr = rerr
-			c.Close()
 		}
 	}
+	lastErr = a.err
 	if p.cfg.upstream != nil {
 		if up, first, err = p.openUpstream(host, port, hello); err == nil {
 			return up, first, "upstream", nil
 		}
 		lastErr = fmt.Errorf("%v; %v", lastErr, err)
 	}
-	return nil, nil, "", fmt.Errorf("blocked with every split mode (last error: %v)", lastErr)
+	return nil, nil, "", fmt.Errorf("blocked with every split mode and address (last error: %v)", lastErr)
+}
+
+// attempt is one openTLS call's search for an address and split method that
+// get the ClientHello answered.
+type attempt struct {
+	p        *proxy
+	host     string
+	port     int
+	hello    []byte
+	hasSNI   bool
+	listed   bool
+	deadline time.Time
+	attempts int
+	total    int
+	err      error
+}
+
+// try connects to ips (staggered) and, on each address that answers, tries
+// modes in order. tier names where the addresses came from ("" for DNS).
+func (a *attempt) try(ips []net.IP, modes []string, tier string) (net.Conn, []byte, string, bool) {
+	if len(ips) == 0 {
+		return nil, nil, "", false
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), a.deadline)
+	defer cancel()
+	results, stop := dialStaggered(ctx, ips, a.port, min(a.p.cfg.timeout, 5*time.Second))
+	defer stop()
+	for r := range results {
+		if r.err != nil {
+			a.err = r.err
+			continue
+		}
+		if c, first, via, ok := a.modesOn(r.ip, r.c, modes, tier); ok {
+			return c, first, via, true
+		}
+	}
+	return nil, nil, "", false
+}
+
+// modesOn tries each mode on ip; c is an already open connection to it.
+func (a *attempt) modesOn(ip net.IP, c net.Conn, modes []string, tier string) (net.Conn, []byte, string, bool) {
+	p := a.p
+	addr := net.JoinHostPort(ip.String(), strconv.Itoa(a.port))
+	d := net.Dialer{Timeout: min(p.cfg.timeout, 5*time.Second)}
+	for _, m := range modes {
+		if time.Now().After(a.deadline) {
+			break
+		}
+		if a.attempts++; a.attempts > 1 {
+			p.stats.retries.Add(1)
+			p.debugf("RETRY %s via %s with %s (%v)", a.host, ip, m, a.err)
+		}
+		if c == nil {
+			var err error
+			if c, err = d.Dial("tcp", addr); err != nil {
+				a.err = err
+				break // this address stopped answering: no point trying other modes on it
+			}
+		}
+		if err := sendPieces(c, plan(a.hello, m), p.delay()); err != nil {
+			c.Close()
+			c, a.err = nil, err
+			continue
+		}
+		via := ip.String() + " (" + m + ")"
+		if tier != "" {
+			via += " [" + tier + "]"
+		}
+		if !a.hasSNI {
+			return c, nil, via, true
+		}
+		wait := p.cfg.timeout
+		if a.attempts < a.total {
+			wait = min(wait, 7*time.Second)
+		}
+		c.SetReadDeadline(time.Now().Add(wait))
+		buf := make([]byte, 16<<10)
+		n, rerr := c.Read(buf)
+		c.SetReadDeadline(time.Time{})
+		if n > 0 {
+			a.success(ip, m, tier)
+			return c, buf[:n], via, true
+		}
+		if rerr == nil {
+			rerr = io.ErrUnexpectedEOF
+		}
+		a.err = rerr
+		c.Close()
+		c = nil
+	}
+	if c != nil {
+		c.Close()
+	}
+	return nil, nil, "", false
+}
+
+// success remembers what worked for the host.
+func (a *attempt) success(ip net.IP, m, tier string) {
+	p := a.p
+	if tier != "" {
+		if r, _ := p.state.route(a.host); r.IP != ip.String() {
+			log.Printf("ADDR %s: its usual addresses are blocked; using %s (%s)", a.host, ip, tier)
+		}
+	}
+	if a.listed || m != "none" || tier != "" {
+		p.state.setRoute(a.host, ip.String(), m)
+	}
+	if !a.listed && m != "none" {
+		if !p.state.isLearned(a.host) {
+			log.Printf("LEARN %s is blocked; it will be split from now on", a.host)
+		}
+		p.state.learn(a.host)
+	}
 }
 
 func (p *proxy) openUpstream(host string, port int, hello []byte) (net.Conn, []byte, error) {
@@ -735,6 +862,7 @@ type statusInfo struct {
 	Failures      int64    `json:"failures"`
 	Retries       int64    `json:"retries"`
 	ViaUpstream   int64    `json:"via_upstream"`
+	ViaOtherIP    int64    `json:"via_other_address"`
 	TopFailures   []string `json:"top_failures,omitempty"`
 	Health        health   `json:"health"`
 	Strategy      int      `json:"strategy"`
@@ -771,6 +899,7 @@ func (p *proxy) status() statusInfo {
 		Failures:      p.stats.fails.Load(),
 		Retries:       p.stats.retries.Load(),
 		ViaUpstream:   p.stats.viaUpstream.Load(),
+		ViaOtherIP:    p.stats.viaOtherIP.Load(),
 		TopFailures:   p.stats.top(5),
 		Health:        *p.health.Load(),
 		Strategy:      p.strat.Load().Version,

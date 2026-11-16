@@ -104,7 +104,7 @@ func cmdDoctor(args []string) error {
 	var dohOK, dohBad []string
 	for _, ep := range strat.DoH {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_, _, err := res.doh(ctx, ep, sample)
+		_, _, err := res.doh(ctx, ep, dnsQ{host: sample, qtype: typeA})
 		cancel()
 		host := strings.TrimSuffix(strings.TrimPrefix(ep, "https://"), "/dns-query")
 		if err != nil {

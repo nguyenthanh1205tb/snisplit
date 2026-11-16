@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"net"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,8 @@ func FuzzFindSNI(f *testing.F) {
 
 func FuzzParseDNSAnswer(f *testing.F) {
 	f.Add(dnsQuery("example.com"))
+	_, sub, _ := net.ParseCIDR("116.14.0.0/24")
+	f.Add(dnsQueryFor(dnsQ{"example.com", typeAAAA, sub}))
 	f.Add([]byte{0, 0, 0x81, 0x80, 0, 1, 0, 1, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1,
 		0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 1, 2, 3, 4})
 	f.Add([]byte{0, 0, 0x81, 0x80, 0, 0, 0, 1, 0xc0, 0})
@@ -45,8 +48,8 @@ func FuzzParseDNSAnswer(f *testing.F) {
 		ips, _, err := parseDNSAnswer(msg)
 		if err == nil {
 			for _, ip := range ips {
-				if ip.To4() == nil {
-					t.Fatalf("non-IPv4 answer %v", ip)
+				if len(ip) != net.IPv6len {
+					t.Fatalf("bad address %v", ip)
 				}
 			}
 		}

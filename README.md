@@ -29,6 +29,9 @@ irm https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.ps
 Nếu Windows hỏi quyền thì bấm **Yes**. Xong: snisplit tự chạy cùng Windows, có biểu tượng cạnh
 đồng hồ. Mở lại Steam là vào được.
 
+Nhà mạng chặn cả địa chỉ IP? snisplit tự tìm máy chủ khác của chính trang đó (IPv6, máy chủ ở
+nước khác, máy chủ khác cùng CDN) và vẫn đi thẳng tới trang, không qua máy trung gian.
+
 - `snisplit browser on`: vào được cả các trang web khác bị chặn trên trình duyệt
 - `snisplit adblock on`: chặn quảng cáo và theo dõi trên trình duyệt
 - `snisplit doctor`: kiểm tra lỗi và chỉ cách sửa
@@ -112,8 +115,11 @@ telemetry or usage data anywhere.
 
 **What it connects to on its own:**
 
-- The sites you open, directly (no server in between)
-- DNS-over-HTTPS servers (Google, Cloudflare, AdGuard, OpenDNS, DNS.SB, Quad9) to look up blocked sites; in browser mode, every site you open
+- The sites you open, directly (no server in between). If a site's usual addresses are blocked,
+  its other servers: IPv6, the ones it uses for other countries, or other servers of its CDN
+  (Cloudflare, Google, Akamai, CloudFront) once a TLS handshake has shown they hold the site's certificate
+- DNS-over-HTTPS servers (Google, Cloudflare, AdGuard, OpenDNS, DNS.SB, Quad9) to look up blocked sites; in browser mode, every site you open.
+  For a site blocked by address, Google's is also asked which servers the site uses in a few other countries
 - GitHub, once a day: the newest site list and [strategy](lists/strategy.json)
 - With ad blocking on, once a day: the [HaGeZi](https://github.com/hagezi/dns-blocklists) and [hostsVN](https://github.com/bigdargon/hostsVN) lists
 - Steam's store, every few hours: a self-test that it still gets through

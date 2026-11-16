@@ -37,6 +37,33 @@ func serveLocal(t *testing.T, p *proxy, raw, remote string) string {
 	return string(b)
 }
 
+func TestLanName(t *testing.T) {
+	for s, want := range map[string]bool{"desktop-n7t8lnp": true, "mac": true, "-x": false, "x-": false, "my_pc": false, "": false, "máy": false} {
+		if dnsLabel(s) != want {
+			t.Errorf("dnsLabel(%q) = %v", s, !want)
+		}
+	}
+	// a phone that reached us by name gets the name in the PAC, so it keeps
+	// working when this computer's address changes
+	p := newProxy(config{listen: "127.0.0.1", port: 8881, share: true}, newResolver(false), nil)
+	out := serveLocal(t, p, "GET /proxy.pac?all=1 HTTP/1.1\r\nHost: Desktop-AB12.local:8881\r\n\r\n", "192.168.1.30:5555")
+	if !strings.Contains(out, "PROXY desktop-ab12.local:8881; DIRECT") {
+		t.Errorf("PAC for a name:\n%s", out)
+	}
+	out = serveLocal(t, p, "GET /proxy.pac?all=1 HTTP/1.1\r\nHost: evil.example:8881\r\n\r\n", "192.168.1.30:5555")
+	if strings.Contains(out, "evil.example") {
+		t.Errorf("PAC trusted an arbitrary host name:\n%s", out)
+	}
+	// on a machine whose name answers multicast DNS, URLs use it
+	if ip := lanIP(); ip != nil {
+		u := sharedURL(ip, 8881, phonePath)
+		if n := lanName(ip); n != "" && u != "http://"+n+":8881"+phonePath {
+			t.Errorf("sharedURL = %s with name %s", u, n)
+		}
+		t.Logf("phones use %s", u)
+	}
+}
+
 func TestPhoneKind(t *testing.T) {
 	for ua, want := range map[string]string{
 		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1": "ios",

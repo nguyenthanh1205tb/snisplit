@@ -199,7 +199,9 @@ func (p *proxy) listenAll() error {
 	log.Printf("HTTP proxy on %s  (PAC: http://%s/proxy.pac)", ln.Addr(), ln.Addr())
 	if p.cfg.share {
 		if ip := lanIP(); ip != nil {
-			log.Printf("shared with the local network: phones use http://%s/proxy.pac?all=1", net.JoinHostPort(ip.String(), strconv.Itoa(p.cfg.port)))
+			go func() { // finding the name takes a moment
+				log.Printf("shared with the local network: phones use %s", sharedURL(ip, p.cfg.port, "/proxy.pac?all=1"))
+			}()
 		}
 	}
 
@@ -851,8 +853,10 @@ func (p *proxy) handleLocal(c net.Conn, req *http.Request) {
 		all := req.URL.Query().Get("all") == "1"
 		proxyHost := "127.0.0.1"
 		if !local { // a phone: point it at the address it used to reach us
-			if h, _, err := net.SplitHostPort(req.Host); err == nil && net.ParseIP(h) != nil {
-				proxyHost = h
+			h, _, err := net.SplitHostPort(req.Host)
+			h = strings.ToLower(h)
+			if err == nil && (net.ParseIP(h) != nil || strings.HasSuffix(h, ".local") && dnsLabel(strings.TrimSuffix(h, ".local"))) {
+				proxyHost = h // its IP, or this computer's name, which outlives an address change
 			} else if ip := lanIP(); ip != nil {
 				proxyHost = ip.String()
 			}

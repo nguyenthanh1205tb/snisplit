@@ -13,6 +13,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"rsc.io/qr"
 )
@@ -67,8 +69,91 @@ func lanIP() net.IP {
 	return nil
 }
 
+// sharedURL is the address of path on this computer for a phone. It uses the
+// computer's name ("name.local") when it answers on the network, so a phone
+// set up once keeps working after the router hands out another address, and
+// ip otherwise.
 func sharedURL(ip net.IP, port int, path string) string {
-	return "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(port)) + path
+	host := ip.String()
+	if n := lanName(ip); n != "" {
+		host = n
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)) + path
+}
+
+var lanNameCache struct {
+	sync.Mutex
+	ip, name string
+	at       time.Time
+}
+
+// lanName is "<computer name>.local" when that name answers multicast DNS
+// queries (as Windows 10+, macOS and most Linux desktops do) with ip, else "".
+// The answer is kept for 10 minutes.
+func lanName(ip net.IP) string {
+	c := &lanNameCache
+	c.Lock()
+	defer c.Unlock()
+	if c.ip == ip.String() && time.Since(c.at) < 10*time.Minute {
+		return c.name
+	}
+	c.ip, c.name, c.at = ip.String(), "", time.Now()
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	h = strings.ToLower(strings.TrimSuffix(h, ".local"))
+	if !dnsLabel(h) {
+		return ""
+	}
+	if name := h + ".local"; mdnsAnswers(name, ip) {
+		c.name = name
+	}
+	return c.name
+}
+
+// dnsLabel reports whether s can be one label of a host name.
+func dnsLabel(s string) bool {
+	if s == "" || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// mdnsAnswers asks the local network, the way a phone would, whose address
+// name is, and reports whether the answer is ip.
+func mdnsAnswers(name string, ip net.IP) bool {
+	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+	q := dnsQueryFor(dnsQ{host: name, qtype: typeA})
+	q[2] = 0            // no recursion in multicast DNS
+	q[len(q)-2] |= 0x80 // ask for a unicast reply
+	c.WriteToUDP(q, &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353})
+	c.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	buf := make([]byte, 1500)
+	for {
+		n, err := c.Read(buf)
+		if err != nil {
+			return false
+		}
+		if n < 12 || buf[2]&0x80 == 0 {
+			continue // not a response
+		}
+		ips, _, _ := parseDNSAnswer(buf[:n])
+		for _, a := range ips {
+			if a.Equal(ip) {
+				return true
+			}
+		}
+	}
 }
 
 // sharedPAC is the address phones put in their proxy settings ("" when

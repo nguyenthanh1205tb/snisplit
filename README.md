@@ -2,7 +2,7 @@
 
 <h1 align="center">snisplit</h1>
 
-<p align="center"><b>Steam bị chặn? Vào lại chỉ với 1 lệnh. Không VPN, không mất tốc độ.</b><br>
+<p align="center"><b>Steam bị chặn. 1 lệnh. Hết.</b><br>
 <a href="#tiếng-việt">Tiếng Việt</a> · <a href="#install">English</a></p>
 
 <p align="center">
@@ -15,35 +15,23 @@
 
 ## Tiếng Việt
 
-Không vào được Steam (Store, Community, ảnh đại diện, trang game) trên mạng FPT, Viettel, VNPT?
-snisplit giúp bạn vào lại bình thường mà **không cần VPN**, không cài driver, không làm chậm mạng
-và không làm ảnh hưởng tới tốc độ tải game. Miễn phí, mã nguồn mở. Đây cũng là một lựa chọn thay
-cho GoodbyeDPI.
+Nhà mạng chặn Steam. Cái này gỡ chặn. Không VPN, không chậm.
 
-**Cài trên Windows:** bấm phím Windows, gõ `PowerShell`, Enter, rồi dán dòng này và Enter:
+Mở PowerShell, dán:
 
 ```powershell
 irm https://raw.githubusercontent.com/nguyenthanh1205tb/snisplit/main/install.ps1 | iex
 ```
 
-Nếu Windows hỏi quyền thì bấm **Yes**. Xong: snisplit tự chạy cùng Windows, có biểu tượng cạnh
-đồng hồ. Mở lại Steam là vào được.
+Hỏi quyền thì bấm Yes. Mở lại Steam. Hết.
 
-Nhà mạng chặn cả địa chỉ IP? snisplit tự tìm máy chủ khác của chính trang đó (IPv6, máy chủ ở
-nước khác, máy chủ khác cùng CDN) và vẫn đi thẳng tới trang, không qua máy trung gian.
+- `snisplit browser on`: trang khác bị chặn, trên trình duyệt
+- `snisplit dns on`: cho mọi ứng dụng
+- `snisplit adblock on`: chặn quảng cáo
+- `snisplit doctor`: lỗi thì chạy cái này
+- `snisplit uninstall`: gỡ
 
-Muốn dùng cho **mọi ứng dụng** (Discord, launcher game...), không chỉ trình duyệt? Bấm biểu tượng
-snisplit cạnh đồng hồ → **All apps (system DNS)**.
-
-- `snisplit browser on`: vào được cả các trang web khác bị chặn trên trình duyệt
-- `snisplit dns on`: áp dụng cho **mọi ứng dụng** (Discord, launcher game...), không chỉ trình duyệt
-- `snisplit adblock on`: chặn quảng cáo và theo dõi (trên trình duyệt, hoặc mọi ứng dụng khi bật `dns on`)
-- `snisplit doctor`: kiểm tra lỗi và chỉ cách sửa
-- `snisplit uninstall`: gỡ sạch
-
-**Có an toàn không?** snisplit là mã nguồn mở, mỗi bản phát hành được GitHub build tự động và
-ký chứng nhận nguồn gốc, không cài driver, không đọc nội dung kết nối, không gửi dữ liệu nào về
-đâu. Xem chi tiết snisplit thay đổi gì trên máy bạn ở [phần dưới](#what-snisplit-does-on-your-computer).
+Mã nguồn mở. Không driver. Không gửi dữ liệu đi đâu. [Chi tiết](#what-snisplit-does-on-your-computer).
 
 ---
 

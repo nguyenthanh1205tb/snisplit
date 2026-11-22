@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.0 (2026-11-23)
+
+- Smaller program: an experimental option for phones on the local network is gone. If you
+  turned it on in v0.10.0, set the phone's Wi-Fi proxy back to Off; the Windows Firewall rule
+  "snisplit (share with phones)" it added can be deleted
+- The project website is gone; this README is the documentation
+
 ## v0.10.0 (2026-11-16)
 
 - `snisplit dns on` (Windows): every app, not just browsers. The computer's DNS points at
